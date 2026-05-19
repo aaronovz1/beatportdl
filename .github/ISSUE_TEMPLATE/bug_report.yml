@@ -4,6 +4,7 @@ title: "[BUG] <title>"
 labels: ['bug']
 body:
   - type: textarea
+    id: description
     attributes:
       label: Description
       description: |
@@ -13,6 +14,7 @@ body:
     validations:
       required: true
   - type: textarea
+    id: steps
     attributes:
       label: Steps To Reproduce
       description: Steps to reproduce the behavior.
@@ -21,8 +23,9 @@ body:
         2. Download Y
         3. See error
     validations:
-      required: false
+      required: true
   - type: input
+    id: os
     attributes:
       label: OS
       description: |
@@ -31,14 +34,71 @@ body:
     validations:
       required: true
   - type: input
+    id: version
     attributes:
       label: Version
       description: |
-        Release version or commit hash
-      placeholder: "1.0.5"
+        Release version or commit hash. Use the fork release version if you are using this maintained fork.
+      placeholder: "1.0.8 or commit hash"
+    validations:
+      required: true
+  - type: dropdown
+    id: store
+    attributes:
+      label: Store
+      description: Which service were you using?
+      options:
+        - Beatport
+        - Beatsource
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: subscription
+    attributes:
+      label: Subscription tier
+      description: Active streaming tier for the affected store. Do not include account identifiers.
+      placeholder: "Beatport Advanced, Beatport Professional, Beatsource Pro+"
+    validations:
+      required: true
+  - type: dropdown
+    id: quality
+    attributes:
+      label: Configured quality
+      options:
+        - medium-hls
+        - medium
+        - high
+        - lossless
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: url_type
+    attributes:
+      label: URL type
+      options:
+        - Track
+        - Release
+        - Playlist
+        - Chart
+        - Label
+        - Artist
+        - Search query
+        - Not sure
     validations:
       required: true
   - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or config
+      description: Remove usernames, passwords, tokens, cookies, account identifiers, and private local paths before posting.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: anything_else
     attributes:
       label: Anything else?
       description: |

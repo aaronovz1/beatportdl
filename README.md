@@ -4,13 +4,21 @@ Beatport & Beatsource downloader (FLAC, AAC)
 
 _Requires an active [Beatport](https://stream.beatport.com/) or [Beatsource](https://stream.beatsource.com/) streaming plan._
 
+> This is the maintained fork at [aaronovz1/beatportdl](https://github.com/aaronovz1/beatportdl). It keeps compatibility with the original [unspok3n/beatportdl](https://github.com/unspok3n/beatportdl) project while carrying forward fixes, user support, and releases from this fork.
+
 ![Screenshot](/screenshots/main.png?raw=true "Screenshot")
+
+## Support Policy
+
+BeatportDL works only with active Beatport or Beatsource streaming subscriptions. This fork does not provide help bypassing subscriptions, territorial restrictions, account limits, or other platform access controls.
+
+For bugs and feature requests, please use the issue templates in this fork and include your OS, BeatportDL version, store, subscription tier, configured quality, URL type, and sanitized logs. Remove usernames, passwords, tokens, cookies, and local private paths before posting logs.
 
 ## Setup
 
-1. [Download](https://github.com/unspok3n/beatportdl/releases/) or [build](#building) BeatportDL.
+1. [Download](https://github.com/aaronovz1/beatportdl/releases/) or [build](#building) BeatportDL.
 
-   _Compiled binaries for Windows, macOS (amd64, arm64) and Linux (amd64, arm64) are available on the [Releases](https://github.com/unspok3n/beatportdl/releases) page._ \
+   _Compiled binaries for Windows, macOS (amd64, arm64) and Linux (amd64, arm64) are available on the [Releases](https://github.com/aaronovz1/beatportdl/releases) page._ \
     _Don't forget to set the execute permission on unix systems, e.g., chmod +x beatportdl-darwin-arm64_
 
 2. Run beatportdl (e.g. `./beatportdl-darwin-arm64`), then specify the:
@@ -117,7 +125,7 @@ tag_mappings:
     track_number: "TRACKNUMBER"
     track_genre: "GENRE"
     track_key: "KEY"
-    track_bpm: "BPM"
+    track_bpm: "BPM_raw"
     track_isrc: "ISRC"
 
     release_name: "ALBUM"
@@ -178,6 +186,22 @@ By default, search returns the results from beatport, if you want to search on b
 
 URL types that are currently supported: **Tracks, Releases, Playlists, Charts, Labels, Artists**
 
+## Development
+
+Pure Go checks that do not require TagLib headers:
+
+```shell
+go test ./config ./internal/beatport ./internal/validator
+```
+
+Full tests/build checks require TagLib headers and libraries:
+
+```shell
+go test ./...
+```
+
+If the full test command fails with `fatal error: 'taglib/tag_c.h' file not found`, install TagLib development headers or pass the correct `-I` and `-L` paths through the build environment described below.
+
 ## Building
 
 Required dependencies:
@@ -208,3 +232,5 @@ LINUX_AMD64_LIB_PATH=-L/libraries/for/linux-amd64 -I/headers/for/linux-amd64
 LINUX_ARM64_LIB_PATH=-L/libraries/for/linux-arm64 -I/headers/for/linux-arm64
 WINDOWS_AMD64_LIB_PATH=-L/libraries/for/windows-amd64 -I/headers/for/windows-amd64
 ```
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes and [docs/RELEASE.md](docs/RELEASE.md) for the release checklist used by this fork.

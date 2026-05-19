@@ -7,6 +7,36 @@ body:
     id: description
     attributes:
       label: Description
-      description: What is the feature you want to see?
+      description: What is the feature you want to see, and what workflow does it improve?
     validations:
       required: true
+  - type: textarea
+    id: proposed_usage
+    attributes:
+      label: Proposed usage
+      description: Show the command, config option, URL shape, or behavior you would expect.
+      placeholder: |
+        beatportdl ...
+    validations:
+      required: false
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Area
+      options:
+        - CLI/config
+        - Download behavior
+        - Metadata/tags
+        - Filenames/directories
+        - Build/release
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility notes
+      description: Note any backwards-compatibility concerns for existing config files, filenames, tags, or scripts.
+    validations:
+      required: false

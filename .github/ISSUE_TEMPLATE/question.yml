@@ -3,9 +3,28 @@ description: General inquiry
 title: "[QUESTION] <title>"
 labels: ['question']
 body:
+  - type: markdown
+    attributes:
+      value: |
+        BeatportDL requires an active Beatport or Beatsource streaming plan. This project does not provide help bypassing subscriptions, territorial restrictions, account limits, or other platform access controls.
   - type: textarea
     id: text
     attributes:
       label: Question
     validations:
       required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release version or commit hash, if relevant.
+      placeholder: "1.0.8 or commit hash"
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Include OS, store, subscription tier, quality, URL type, and sanitized logs if the question is about behavior.
+    validations:
+      required: false
