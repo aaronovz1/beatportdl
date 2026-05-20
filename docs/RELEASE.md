@@ -21,7 +21,7 @@ This fork keeps the `beatportdl` name and publishes maintained-fork releases fro
 
    - `ubuntu-latest` for Linux container builds
    - `macos-15-intel` for `darwin-amd64`
-   - `macos-14` for `darwin-arm64`
+   - `macos-15` for `darwin-arm64`
    - `windows-2022` with MSYS2 for `windows-amd64`
 
 4. Build the pinned builder image:

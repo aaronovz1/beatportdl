@@ -74,7 +74,7 @@ jobs:
 
   macos-arm64-release:
     name: macOS arm64 release artifact
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

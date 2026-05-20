@@ -229,7 +229,7 @@ GitHub Actions is now configured to validate release builds on every push and pu
 
 - Linux artifacts come from the pinned Docker builder on `ubuntu-latest`.
 - macOS `amd64` artifacts come from a native `macos-15-intel` runner.
-- macOS `arm64` artifacts come from a native `macos-14` runner.
+- macOS `arm64` artifacts come from a native `macos-15` runner.
 - Windows `amd64` artifacts come from a native `windows-2022` runner with MSYS2 MinGW.
 
 Tagged releases are published automatically by `.github/workflows/release.yml`, which packages the binaries and uploads a `SHA256SUMS` manifest with the release assets once the runner jobs pass.
