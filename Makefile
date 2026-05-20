@@ -3,7 +3,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-BUILD_CMD = go build -ldflags "-w -linkmode external -extldflags '-lstdc++'" -buildmode pie
+BUILD_CMD = go build -buildvcs=false -ldflags "-w -linkmode external -extldflags '-lstdc++'" -buildmode pie
 BUILD_SRC = ./cmd/beatportdl
 BUILD_DIR = ./bin
 DOCKER_BUILD_SCRIPT = ./scripts/docker-build.sh
