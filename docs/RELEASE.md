@@ -20,7 +20,7 @@ This fork keeps the `beatportdl` name and publishes maintained-fork releases fro
 3. Confirm GitHub Actions runner coverage still matches the release targets:
 
    - `ubuntu-latest` for Linux container builds
-   - `macos-13` for `darwin-amd64`
+   - `macos-15-intel` for `darwin-amd64`
    - `macos-14` for `darwin-arm64`
    - `windows-2022` with MSYS2 for `windows-amd64`
 

@@ -188,10 +188,9 @@ URL types that are currently supported: **Tracks, Releases, Playlists, Charts, L
 
 ## Development
 
-Containerized checks with pinned builder inputs:
+Containerized CI checks with pinned builder inputs:
 
 ```shell
-./scripts/docker-build.sh pure-test
 ./scripts/docker-build.sh test
 ```
 
@@ -229,7 +228,7 @@ The builder image pins Zig, zlib, and TagLib inputs and verifies the Zig and zli
 GitHub Actions is now configured to validate release builds on every push and pull request with this split:
 
 - Linux artifacts come from the pinned Docker builder on `ubuntu-latest`.
-- macOS `amd64` artifacts come from a native `macos-13` runner.
+- macOS `amd64` artifacts come from a native `macos-15-intel` runner.
 - macOS `arm64` artifacts come from a native `macos-14` runner.
 - Windows `amd64` artifacts come from a native `windows-2022` runner with MSYS2 MinGW.
 

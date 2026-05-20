@@ -83,7 +83,7 @@ ensure_taglib_source() {
 
   if [ ! -d "$source_dir/.git" ]; then
     rm -rf "$source_dir"
-    git clone --depth 1 --branch "v${taglib_version}" --recurse-submodules --shallow-submodules "$taglib_url" "$source_dir"
+    git clone --depth 1 --branch "v${taglib_version}" --recurse-submodules --shallow-submodules "$taglib_url" "$source_dir" >&2
   fi
 
   if [ "$(git -C "$source_dir" rev-parse HEAD)" != "$taglib_commit" ]; then
