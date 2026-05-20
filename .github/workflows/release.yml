@@ -172,7 +172,8 @@ jobs:
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           tag="${GITHUB_REF_NAME}"
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "$tag" --generate-notes
-          gh release upload "$tag" dist/*/* dist/SHA256SUMS --clobber
+          gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1 || gh release create "$tag" --repo "$GH_REPO" --title "$tag" --generate-notes
+          gh release upload "$tag" --repo "$GH_REPO" dist/*/* dist/SHA256SUMS --clobber
