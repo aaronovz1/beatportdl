@@ -6,6 +6,7 @@ endif
 BUILD_CMD = go build -ldflags "-w -linkmode external -extldflags '-lstdc++'" -buildmode pie
 BUILD_SRC = ./cmd/beatportdl
 BUILD_DIR = ./bin
+DOCKER_BUILD_SCRIPT = ./scripts/docker-build.sh
 
 ZIG_CC = zig cc
 ZIG_CXX = zig c++
@@ -13,6 +14,36 @@ ZIG_CXX = zig c++
 MACOS_SDK_PATH ?= /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
 
 all: darwin-arm64 darwin-amd64 linux-amd64 linux-arm64 windows-amd64
+
+docker-image:
+	${DOCKER_BUILD_SCRIPT} build-image
+
+docker-pure-test:
+	${DOCKER_BUILD_SCRIPT} pure-test
+
+docker-test:
+	${DOCKER_BUILD_SCRIPT} test
+
+docker-linux-amd64:
+	${DOCKER_BUILD_SCRIPT} linux-amd64
+
+docker-linux-arm64:
+	${DOCKER_BUILD_SCRIPT} linux-arm64
+
+docker-windows-amd64:
+	${DOCKER_BUILD_SCRIPT} windows-amd64
+
+docker-darwin-amd64:
+	${DOCKER_BUILD_SCRIPT} darwin-amd64
+
+docker-darwin-arm64:
+	${DOCKER_BUILD_SCRIPT} darwin-arm64
+
+docker-release-core:
+	${DOCKER_BUILD_SCRIPT} release-core
+
+docker-release-all:
+	${DOCKER_BUILD_SCRIPT} release-all
 
 darwin-arm64:
 	@echo "Building for macOS ARM64"

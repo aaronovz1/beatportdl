@@ -17,3 +17,5 @@ This is the first maintained-fork release candidate from `aaronovz1/beatportdl`.
 - Expanded issue templates for bug reports, feature requests, and questions.
 - CI with pure Go tests plus a TagLib-enabled full test job.
 - Regression tests for URL parsing, tag mapping defaults, path sanitization helpers, and first-genre directory naming.
+- A pinned Docker builder, wrapper scripts, and CI that move supported release builds off host-managed Zig/TagLib/zlib installations.
+- Native GitHub Actions release jobs for macOS amd64, macOS arm64, and Windows amd64, plus automatic GitHub release publishing with checksums.

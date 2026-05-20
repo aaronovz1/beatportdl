@@ -10,7 +10,14 @@ Do not submit changes that bypass subscriptions, territorial restrictions, accou
 
 ## Development
 
-Run the pure Go checks before opening a pull request:
+Run the containerized checks before opening a pull request:
+
+```shell
+./scripts/docker-build.sh pure-test
+./scripts/docker-build.sh test
+```
+
+If Docker is unavailable, the equivalent host-managed commands are:
 
 ```shell
 go test ./config ./internal/beatport ./internal/validator
@@ -22,7 +29,7 @@ Run the full suite when TagLib headers and libraries are installed:
 go test ./...
 ```
 
-If `taglib/tag_c.h` is missing, install TagLib development headers or provide the correct include and library paths through the Makefile environment variables.
+If `taglib/tag_c.h` is missing in host-managed builds, install TagLib development headers or provide the correct include and library paths through the Makefile environment variables.
 
 ## Pull Requests
 

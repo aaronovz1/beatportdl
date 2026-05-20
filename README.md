@@ -188,6 +188,13 @@ URL types that are currently supported: **Tracks, Releases, Playlists, Charts, L
 
 ## Development
 
+Containerized checks with pinned builder inputs:
+
+```shell
+./scripts/docker-build.sh pure-test
+./scripts/docker-build.sh test
+```
+
 Pure Go checks that do not require TagLib headers:
 
 ```shell
@@ -204,7 +211,45 @@ If the full test command fails with `fatal error: 'taglib/tag_c.h' file not foun
 
 ## Building
 
-Required dependencies:
+The maintained fork now ships with a containerized builder so supported release builds do not depend on host-installed Zig, TagLib, or zlib.
+
+Containerized release commands:
+
+```shell
+./scripts/docker-build.sh release-core
+```
+
+That builds:
+
+- `beatportdl-linux-amd64`
+- `beatportdl-linux-arm64`
+
+The builder image pins Zig, zlib, and TagLib inputs and verifies the Zig and zlib source checksums during image creation. TagLib is pinned to an exact signed release commit. The container does not fetch dependencies at runtime.
+
+GitHub Actions is now configured to validate release builds on every push and pull request with this split:
+
+- Linux artifacts come from the pinned Docker builder on `ubuntu-latest`.
+- macOS `amd64` artifacts come from a native `macos-13` runner.
+- macOS `arm64` artifacts come from a native `macos-14` runner.
+- Windows `amd64` artifacts come from a native `windows-2022` runner with MSYS2 MinGW.
+
+Tagged releases are published automatically by `.github/workflows/release.yml`, which packages the binaries and uploads a `SHA256SUMS` manifest with the release assets once the runner jobs pass.
+
+macOS builds still require an Apple SDK because of Apple licensing. If you have one locally, mount it through `MACOS_SDK_PATH`:
+
+```shell
+MACOS_SDK_PATH=/path/to/MacOSX.sdk ./scripts/docker-build.sh darwin-arm64
+MACOS_SDK_PATH=/path/to/MacOSX.sdk ./scripts/docker-build.sh darwin-amd64
+```
+
+You can also use Make targets as wrappers:
+
+```shell
+make docker-test
+make docker-release-core
+```
+
+Host-managed build prerequisites, if you choose not to use Docker:
 
 - [TagLib](https://github.com/taglib/taglib) >= 2.0
 - [zlib](https://github.com/madler/zlib) >= 1.2.3

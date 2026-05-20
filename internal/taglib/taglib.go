@@ -1,7 +1,7 @@
 package taglib
 
 /*
-	#cgo LDFLAGS: -ltag -ltag_c -lz
+	#cgo LDFLAGS: -ltag_c -ltag -lz
 	#include <stdlib.h>
 	#include <taglib/tag_c.h>
 	#include "extensions.h"

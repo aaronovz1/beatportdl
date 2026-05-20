@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux-release:
+    name: Linux release artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build pinned builder image
+        run: docker build -f Dockerfile.build -t beatportdl-builder:release .
+
+      - name: Build Linux release artifacts in container
+        run: docker run --rm -v "$PWD:/workspace" beatportdl-builder:release release-core
+
+      - name: Package Linux artifacts
+        run: |
+          mkdir -p dist
+          tar -C bin -czf "dist/beatportdl-${GITHUB_REF_NAME}-linux-amd64.tar.gz" beatportdl-linux-amd64
+          tar -C bin -czf "dist/beatportdl-${GITHUB_REF_NAME}-linux-arm64.tar.gz" beatportdl-linux-arm64
+
+      - name: Upload Linux release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/*
+          if-no-files-found: error
+
+  macos-amd64-release:
+    name: macOS amd64 release artifact
+    runs-on: macos-13
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install native build tools
+        run: brew install cmake ninja
+
+      - name: Build pinned macOS amd64 dependencies
+        run: ./scripts/build-release-deps.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
+
+      - name: Build macOS amd64 artifact
+        run: ./scripts/build-release-target.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
+
+      - name: Package macOS amd64 artifact
+        run: |
+          mkdir -p dist
+          tar -C bin -czf "dist/beatportdl-${GITHUB_REF_NAME}-darwin-amd64.tar.gz" beatportdl-darwin-amd64
+
+      - name: Upload macOS amd64 release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-darwin-amd64
+          path: dist/*
+          if-no-files-found: error
+
+  macos-arm64-release:
+    name: macOS arm64 release artifact
+    runs-on: macos-14
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install native build tools
+        run: brew install cmake ninja
+
+      - name: Build pinned macOS arm64 dependencies
+        run: ./scripts/build-release-deps.sh darwin-arm64 "$RUNNER_TEMP/deps/darwin-arm64"
+
+      - name: Build macOS arm64 artifact
+        run: ./scripts/build-release-target.sh darwin-arm64 "$RUNNER_TEMP/deps/darwin-arm64"
+
+      - name: Package macOS arm64 artifact
+        run: |
+          mkdir -p dist
+          tar -C bin -czf "dist/beatportdl-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" beatportdl-darwin-arm64
+
+      - name: Upload macOS arm64 release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-darwin-arm64
+          path: dist/*
+          if-no-files-found: error
+
+  windows-release:
+    name: Windows amd64 release artifact
+    runs-on: windows-2022
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          install: >-
+            git
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-ninja
+
+      - name: Build pinned Windows dependencies
+        shell: msys2 {0}
+        run: ./scripts/build-release-deps.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
+
+      - name: Build Windows artifact
+        shell: msys2 {0}
+        run: ./scripts/build-release-target.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
+
+      - name: Package Windows artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path bin/beatportdl-windows-amd64.exe -DestinationPath "dist/beatportdl-$env:GITHUB_REF_NAME-windows-amd64.zip" -Force
+
+      - name: Upload Windows release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs:
+      - linux-release
+      - macos-amd64-release
+      - macos-arm64-release
+      - windows-release
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+
+      - name: Generate checksums
+        run: |
+          find dist -type f -maxdepth 2 -print | sort | xargs sha256sum > dist/SHA256SUMS
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "$tag" --generate-notes
+          gh release upload "$tag" dist/*/* dist/SHA256SUMS --clobber
