@@ -7,6 +7,7 @@ This fork keeps the `beatportdl` name and publishes maintained-fork releases fro
 - Use patch releases such as `v1.0.8` for compatibility-preserving fixes.
 - Reserve minor releases such as `v1.1.0` for new CLI flags, config behavior, or workflow changes.
 - Note upstream PRs and issues adopted in the changelog.
+- Tag release candidates as `vX.Y.Z-rcN`. They should publish as GitHub prereleases, not as the latest stable release.
 
 ## Preflight
 
@@ -60,6 +61,7 @@ This fork keeps the `beatportdl` name and publishes maintained-fork releases fro
 9. Smoke test one track, release, playlist, and chart with a valid subscription.
 10. Verify tags, cover handling, filenames, progress output, and error logs.
 11. Push the release tag and let `.github/workflows/release.yml` publish the GitHub release assets and `SHA256SUMS` after the runner jobs pass.
+12. Ensure `CHANGELOG.md` contains the notes for the base version (`vX.Y.Z`), since the workflow publishes release notes from that section for both stable tags and `-rc` tags.
 
 ## Build Targets
 

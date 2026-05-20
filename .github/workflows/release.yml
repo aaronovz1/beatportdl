@@ -165,6 +165,9 @@ jobs:
           pattern: release-*
           path: dist
 
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Generate checksums
         run: |
           find dist -type f -maxdepth 2 -print | sort | xargs sha256sum > dist/SHA256SUMS
@@ -174,6 +177,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1 || gh release create "$tag" --repo "$GH_REPO" --title "$tag" --generate-notes
+          notes_file="$(mktemp)"
+          ./scripts/release-notes.sh "$tag" > "$notes_file"
+
+          release_flags=(--title "$tag" --notes-file "$notes_file")
+          if [[ "$tag" =~ -rc[0-9]+$ ]]; then
+            release_flags+=(--prerelease --latest=false)
+          fi
+
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "$GH_REPO" "${release_flags[@]}"
+          else
+            gh release create "$tag" --repo "$GH_REPO" "${release_flags[@]}"
+          fi
+
           gh release upload "$tag" --repo "$GH_REPO" dist/*/* dist/SHA256SUMS --clobber
