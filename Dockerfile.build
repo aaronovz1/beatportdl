@@ -34,7 +34,13 @@ RUN curl -fsSLo /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig
   && zig version
 
 RUN mkdir -p /opt/src \
-  && curl -fsSLo /tmp/zlib.tar.gz "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz" \
+  && rm -f /tmp/zlib.tar.gz \
+  && for url in "https://zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz" "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz"; do \
+       if curl -fsSLo /tmp/zlib.tar.gz "$url"; then \
+         break; \
+       fi; \
+     done \
+  && test -f /tmp/zlib.tar.gz \
   && echo "${ZLIB_TAR_SHA256}  /tmp/zlib.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/zlib.tar.gz -C /opt/src \
   && mv "/opt/src/zlib-${ZLIB_VERSION}" /opt/src/zlib \

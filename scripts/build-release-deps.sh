@@ -14,7 +14,7 @@ builds_dir=${THIRD_PARTY_BUILDS_DIR:-"$third_party_root/builds"}
 
 zlib_version=${ZLIB_VERSION:-1.3.2}
 zlib_tarball="zlib-${zlib_version}.tar.gz"
-zlib_url=${ZLIB_URL:-"https://zlib.net/${zlib_tarball}"}
+zlib_urls=${ZLIB_URLS:-"https://zlib.net/fossils/${zlib_tarball} https://zlib.net/${zlib_tarball}"}
 zlib_sha256=${ZLIB_SHA256:-bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16}
 
 taglib_version=${TAGLIB_VERSION:-2.3}
@@ -65,9 +65,19 @@ verify_sha256() {
 ensure_zlib_source() {
   local tarball="$downloads_dir/$zlib_tarball"
   local source_dir="$sources_dir/zlib-$zlib_version"
+  local url
 
   if [ ! -f "$tarball" ]; then
-    curl -fsSLo "$tarball" "$zlib_url"
+    rm -f "$tarball"
+    for url in $zlib_urls; do
+      if curl -fsSLo "$tarball" "$url"; then
+        break
+      fi
+    done
+    if [ ! -f "$tarball" ]; then
+      printf 'unable to download %s from configured sources\n' "$zlib_tarball" >&2
+      exit 1
+    fi
   fi
   verify_sha256 "$zlib_sha256" "$tarball"
 
