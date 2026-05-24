@@ -104,3 +104,43 @@ func TestReserveTrackFilePathRespectsTrackExistsForPreexistingFile(t *testing.T)
 		}
 	})
 }
+
+func TestCleanupCoverTempRemovesTemporaryCoverFile(t *testing.T) {
+	dir := t.TempDir()
+	tempCover := filepath.Join(dir, "3d57726c-ba93-4517-80801f4e")
+	if err := os.WriteFile(tempCover, []byte("cover"), 0600); err != nil {
+		t.Fatalf("WriteFile(%s): %v", tempCover, err)
+	}
+
+	cleanupCoverTemp(tempCover)
+
+	if _, err := os.Stat(tempCover); !os.IsNotExist(err) {
+		t.Fatalf("expected temporary cover file to be removed, stat err = %v", err)
+	}
+}
+
+func TestCleanupCoverTempAfterHandleCoverFileKeepsCoverJPG(t *testing.T) {
+	dir := t.TempDir()
+	tempCover := filepath.Join(dir, "517f33bd-1b86-4b98-86...da35b7fb")
+	if err := os.WriteFile(tempCover, []byte("cover"), 0600); err != nil {
+		t.Fatalf("WriteFile(%s): %v", tempCover, err)
+	}
+
+	app := &application{
+		config: &config.AppConfig{
+			KeepCover:     true,
+			SortByContext: true,
+		},
+	}
+
+	if err := app.handleCoverFile(tempCover); err != nil {
+		t.Fatalf("handleCoverFile(%s): %v", tempCover, err)
+	}
+
+	cleanupCoverTemp(tempCover)
+
+	coverPath := filepath.Join(dir, "cover.jpg")
+	if _, err := os.Stat(coverPath); err != nil {
+		t.Fatalf("expected preserved cover file at %s: %v", coverPath, err)
+	}
+}

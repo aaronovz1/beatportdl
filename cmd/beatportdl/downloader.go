@@ -214,6 +214,13 @@ func (app *application) handleCoverFile(path string) error {
 	return nil
 }
 
+func cleanupCoverTemp(path string) {
+	if path == "" {
+		return
+	}
+	_ = os.Remove(path)
+}
+
 var (
 	ErrTrackFileExists = errors.New("file already exists")
 )
@@ -597,12 +604,13 @@ func (app *application) handleTrackLink(inst *beatport.Beatport, link *beatport.
 			cover, err = app.downloadCover(track.Release.Image, downloadsDir)
 			if err != nil {
 				app.errorLogWrapper(link.Original, "download track release cover", err)
+			} else {
+				defer cleanupCoverTemp(cover)
 			}
 		}
 
 		if err := app.handleTrack(inst, track, downloadsDir, cover); err != nil {
 			app.errorLogWrapper(link.Original, "handle track", err)
-			os.Remove(cover)
 			return
 		}
 
@@ -635,6 +643,8 @@ func (app *application) handleReleaseLink(inst *beatport.Beatport, link *beatpor
 		cover, err = app.downloadCover(release.Image, downloadsDir)
 		if err != nil {
 			app.errorLogWrapper(link.Original, "download release cover", err)
+		} else {
+			defer cleanupCoverTemp(cover)
 		}
 		app.semRelease(app.downloadSem)
 	}
@@ -717,14 +727,13 @@ func (app *application) handlePlaylistLink(inst *beatport.Beatport, link *beatpo
 				cover, err = app.downloadCover(item.Track.Release.Image, trackDownloadsDir)
 				if err != nil {
 					app.errorLogWrapper(trackStoreUrl, "download track release cover", err)
-				} else if !app.config.ForceReleaseDirectories {
-					defer os.Remove(cover)
+				} else {
+					defer cleanupCoverTemp(cover)
 				}
 			}
 
 			if err := app.handleTrack(inst, &item.Track, trackDownloadsDir, cover); err != nil {
 				app.errorLogWrapper(trackStoreUrl, "handle track", err)
-				os.Remove(cover)
 				app.cleanup(trackDownloadsDir)
 				return
 			}
@@ -768,6 +777,8 @@ func (app *application) handleChartLink(inst *beatport.Beatport, link *beatport.
 			cover, err := app.downloadCover(chart.Image, downloadsDir)
 			if err != nil {
 				app.errorLogWrapper(link.Original, "download chart cover", err)
+			} else {
+				defer cleanupCoverTemp(cover)
 			}
 			if err := app.handleCoverFile(cover); err != nil {
 				app.errorLogWrapper(link.Original, "handle cover file", err)
@@ -807,14 +818,13 @@ func (app *application) handleChartLink(inst *beatport.Beatport, link *beatport.
 				cover, err = app.downloadCover(track.Release.Image, trackDownloadsDir)
 				if err != nil {
 					app.errorLogWrapper(trackStoreUrl, "download track release cover", err)
-				} else if !app.config.ForceReleaseDirectories {
-					defer os.Remove(cover)
+				} else {
+					defer cleanupCoverTemp(cover)
 				}
 			}
 
 			if err := app.handleTrack(inst, &track, trackDownloadsDir, cover); err != nil {
 				app.errorLogWrapper(trackStoreUrl, "handle track", err)
-				os.Remove(cover)
 				app.cleanup(trackDownloadsDir)
 				return
 			}
@@ -867,6 +877,8 @@ func (app *application) handleLabelLink(inst *beatport.Beatport, link *beatport.
 				cover, err = app.downloadCover(release.Image, releaseDir)
 				if err != nil {
 					app.errorLogWrapper(releaseStoreUrl, "download release cover", err)
+				} else {
+					defer cleanupCoverTemp(cover)
 				}
 				app.semRelease(app.downloadSem)
 			}
@@ -891,7 +903,6 @@ func (app *application) handleLabelLink(inst *beatport.Beatport, link *beatport.
 			})
 			if err != nil {
 				app.errorLogWrapper(releaseStoreUrl, "handle release tracks", err)
-				os.Remove(cover)
 				app.cleanup(releaseDir)
 				return
 			}
@@ -954,12 +965,13 @@ func (app *application) handleArtistLink(inst *beatport.Beatport, link *beatport
 				cover, err = app.downloadCover(release.Image, releaseDir)
 				if err != nil {
 					app.errorLogWrapper(trackStoreUrl, "download track release cover", err)
+				} else {
+					defer cleanupCoverTemp(cover)
 				}
 			}
 
 			if err := app.handleTrack(inst, t, releaseDir, cover); err != nil {
 				app.errorLogWrapper(trackStoreUrl, "handle track", err)
-				os.Remove(cover)
 				app.cleanup(releaseDir)
 				return
 			}
