@@ -218,6 +218,40 @@ var (
 	ErrTrackFileExists = errors.New("file already exists")
 )
 
+func (app *application) reserveTrackFilePath(directory, fileName, fileExtension string, trackID int64) (string, error) {
+	basePath := fmt.Sprintf("%s/%s%s", directory, fileName, fileExtension)
+
+	app.activeFilesMutex.Lock()
+	defer app.activeFilesMutex.Unlock()
+
+	if owner, exists := app.activeFiles[basePath]; exists && owner != trackID {
+		i := 1
+		for {
+			candidate := fmt.Sprintf("%s/%s (%d)%s", directory, fileName, i, fileExtension)
+			if owner, exists := app.activeFiles[candidate]; !exists || owner == trackID {
+				app.activeFiles[candidate] = trackID
+				return candidate, nil
+			}
+			i++
+		}
+	}
+
+	if _, err := os.Stat(basePath); err == nil {
+		switch app.config.TrackExists {
+		case "skip":
+			return "", nil
+		case "update", "overwrite":
+			app.activeFiles[basePath] = trackID
+			return basePath, nil
+		case "error":
+			return "", ErrTrackFileExists
+		}
+	}
+
+	app.activeFiles[basePath] = trackID
+	return basePath, nil
+}
+
 func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track, directory string, quality string) (string, error) {
 	var fileExtension string
 	var displayQuality string
@@ -265,37 +299,17 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 			KeySystem:          app.config.KeySystem,
 		},
 	)
-	filePath := fmt.Sprintf("%s/%s%s", directory, fileName, fileExtension)
-	if _, err := os.Stat(filePath); err == nil {
-		app.activeFilesMutex.RLock()
-		_, exists := app.activeFiles[filePath]
-		app.activeFilesMutex.RUnlock()
-
-		if exists {
-			i := 1
-			for {
-				filePath = fmt.Sprintf("%s/%s (%d)%s", directory, fileName, i, fileExtension)
-				if _, err := os.Stat(filePath); os.IsNotExist(err) {
-					break
-				}
-				i++
-			}
-		} else {
-			switch app.config.TrackExists {
-			case "skip":
-				return "", nil
-			case "update":
-				app.infoLogWrapper(track.StoreUrl(), "updating tags")
-				return filePath, nil
-			case "error":
-				return "", ErrTrackFileExists
-			}
-		}
+	filePath, err := app.reserveTrackFilePath(directory, fileName, fileExtension, track.ID)
+	if err != nil {
+		return "", err
 	}
-
-	app.activeFilesMutex.Lock()
-	app.activeFiles[filePath] = struct{}{}
-	app.activeFilesMutex.Unlock()
+	if filePath == "" {
+		return "", nil
+	}
+	if _, err := os.Stat(filePath); err == nil && app.config.TrackExists == "update" {
+		app.infoLogWrapper(track.StoreUrl(), "updating tags")
+		return filePath, nil
+	}
 
 	var prefix string
 	infoDisplay := fmt.Sprintf("%s (%s) [%s]", track.Name.String(), track.MixName.String(), displayQuality)

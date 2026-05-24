@@ -33,7 +33,7 @@ type application struct {
 	pbp         *mpb.Progress
 
 	urls             []string
-	activeFiles      map[string]struct{}
+	activeFiles      map[string]int64
 	activeFilesMutex sync.RWMutex
 
 	bp *beatport.Beatport
@@ -120,7 +120,7 @@ func main() {
 
 		app.pbp = mpb.New(mpb.WithAutoRefresh(), mpb.WithOutput(color.Output))
 		app.logWriter = app.pbp
-		app.activeFiles = make(map[string]struct{}, len(app.urls))
+		app.activeFiles = make(map[string]int64, len(app.urls))
 
 		for _, url := range app.urls {
 			app.globalWorker(func() {
