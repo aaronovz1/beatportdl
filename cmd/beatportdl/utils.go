@@ -15,9 +15,12 @@ import (
 	"sync"
 
 	"github.com/fatih/color"
+	"github.com/mattn/go-runewidth"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
 )
+
+const progressPrefixMaxWidth = 72
 
 func (app *application) globalWorker(fn func()) {
 	app.wg.Add(1)
@@ -110,8 +113,37 @@ func toMetaFunc(c *color.Color) func(string) string {
 	}
 }
 
+func clampProgressPrefix(prefix string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if runewidth.StringWidth(prefix) <= maxWidth {
+		return prefix
+	}
+
+	const ellipsis = "..."
+	ellipsisWidth := runewidth.StringWidth(ellipsis)
+	if maxWidth <= ellipsisWidth {
+		return ellipsis[:maxWidth]
+	}
+
+	width := 0
+	var out []rune
+	for _, r := range prefix {
+		runeWidth := runewidth.RuneWidth(r)
+		if width+runeWidth > maxWidth-ellipsisWidth {
+			break
+		}
+		out = append(out, r)
+		width += runeWidth
+	}
+
+	return string(out) + ellipsis
+}
+
 func ProgressBarOptions(prefix string) []mpb.BarOption {
 	red, green, blue := color.New(color.FgRed), color.New(color.FgGreen), color.New(color.FgBlue)
+	prefix = clampProgressPrefix(prefix, progressPrefixMaxWidth)
 
 	options := []mpb.BarOption{
 		mpb.BarFillerClearOnComplete(),

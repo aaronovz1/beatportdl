@@ -4,7 +4,10 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/mattn/go-runewidth"
 )
 
 func TestFindConfigFile(t *testing.T) {
@@ -101,4 +104,38 @@ func unsetEnv(t *testing.T, key string) {
 			_ = os.Unsetenv(key)
 		}
 	})
+}
+
+func TestClampProgressPrefixLeavesShortStringsUntouched(t *testing.T) {
+	got := clampProgressPrefix("Short title [FLAC]", 72)
+	want := "Short title [FLAC]"
+
+	if got != want {
+		t.Fatalf("clampProgressPrefix() = %q, want %q", got, want)
+	}
+}
+
+func TestClampProgressPrefixTruncatesLongStrings(t *testing.T) {
+	input := strings.Repeat("Very Long Track Name ", 8) + "[FLAC]"
+
+	got := clampProgressPrefix(input, 32)
+
+	if got == input {
+		t.Fatalf("expected truncated prefix, got original %q", got)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("clampProgressPrefix() = %q, want ellipsis suffix", got)
+	}
+	if runewidth.StringWidth(got) > 32 {
+		t.Fatalf("clampProgressPrefix() width = %d, want <= 32", runewidth.StringWidth(got))
+	}
+}
+
+func TestClampProgressPrefixHandlesVerySmallWidths(t *testing.T) {
+	got := clampProgressPrefix("Anything", 2)
+	want := ".."
+
+	if got != want {
+		t.Fatalf("clampProgressPrefix() = %q, want %q", got, want)
+	}
 }
