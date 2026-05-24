@@ -28,3 +28,10 @@ Include:
 - Sanitized command output, config, and logs.
 
 Remove usernames, passwords, tokens, cookies, account identifiers, and private local paths before posting.
+
+## Common 400/403 Causes
+
+- `400` on download requests often means the requested quality is not available for the selected store or your subscription tier.
+- `403` on login or token refresh usually means invalid credentials or stale cached credentials.
+- `403` on track, release, or download requests can also mean territorial availability restrictions or an unsupported subscription tier for that resource.
+- If you switch between Beatport and Beatsource, include which store you are using in the report because the same quality setting may not be available in both.

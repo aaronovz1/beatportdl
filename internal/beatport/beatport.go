@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,76 @@ type Beatport struct {
 type FetcherError struct {
 	Detail *string `json:"detail,omitempty"`
 	Error  *string `json:"error,omitempty"`
+}
+
+type APIError struct {
+	StatusCode int
+	Detail     string
+	Endpoint   string
+	Store      Store
+}
+
+func (e *APIError) Error() string {
+	message := fmt.Sprintf("request failed with status code: %d", e.StatusCode)
+	if e.Detail != "" {
+		message = fmt.Sprintf("%s - %s", message, e.Detail)
+	}
+	if hint := e.Hint(); hint != "" {
+		message = fmt.Sprintf("%s (hint: %s)", message, hint)
+	}
+	return message
+}
+
+func (e *APIError) Hint() string {
+	detail := strings.ToLower(e.Detail)
+	endpoint := strings.ToLower(e.Endpoint)
+
+	if endpoint == tokenEndpoint || endpoint == authEndpoint || endpoint == loginEndpoint {
+		switch e.StatusCode {
+		case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
+			return "authentication failed; verify your credentials and remove stale cached credentials if needed"
+		}
+	}
+
+	if strings.Contains(endpoint, "/download/") || strings.Contains(endpoint, "/stream/") {
+		quality := requestedQualityFromEndpoint(e.Endpoint)
+		if quality != "" && (e.StatusCode == http.StatusBadRequest || e.StatusCode == http.StatusForbidden) {
+			return fmt.Sprintf(
+				"requested quality %q may not be available for this store or subscription tier, or the track may be unavailable in your region",
+				quality,
+			)
+		}
+		if e.StatusCode == http.StatusForbidden {
+			return "download access was denied; check your active subscription tier, selected store, and territorial availability"
+		}
+	}
+
+	if e.StatusCode == http.StatusForbidden {
+		if strings.Contains(detail, "territor") || strings.Contains(detail, "region") || strings.Contains(detail, "country") {
+			return "access was denied for this resource; check territorial availability for your account"
+		}
+		if strings.Contains(detail, "subscription") || strings.Contains(detail, "plan") {
+			return "access was denied; check that your subscription tier includes this operation and quality"
+		}
+		return "access was denied; check login state, subscription tier, selected store, and territorial availability"
+	}
+
+	if e.StatusCode == http.StatusBadRequest {
+		if strings.Contains(detail, "quality") {
+			return "the requested quality was rejected; check the configured quality against your subscription tier and selected store"
+		}
+		return "the request was rejected; check the configured quality, URL type, and whether the resource is available to your account"
+	}
+
+	return ""
+}
+
+func requestedQualityFromEndpoint(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return parsed.Query().Get("quality")
 }
 
 type Paginated[T any] struct {
@@ -128,19 +199,24 @@ func (b *Beatport) fetch(method, endpoint string, payload interface{}, contentTy
 		defer resp.Body.Close()
 		response := &FetcherError{}
 		if err = json.NewDecoder(resp.Body).Decode(response); err == nil {
-			detail := "Unknown error"
+			detail := ""
 			if response.Detail != nil {
 				detail = *response.Detail
 			} else if response.Error != nil {
 				detail = *response.Error
 			}
-			return nil, fmt.Errorf(
-				"request failed with status code: %d - %s",
-				resp.StatusCode,
-				detail,
-			)
+			return nil, &APIError{
+				StatusCode: resp.StatusCode,
+				Detail:     detail,
+				Endpoint:   endpoint,
+				Store:      b.store,
+			}
 		}
-		return nil, fmt.Errorf("request failed with status code: %d", resp.StatusCode)
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Endpoint:   endpoint,
+			Store:      b.store,
+		}
 	}
 
 	return resp, nil
