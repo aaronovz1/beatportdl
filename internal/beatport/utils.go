@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type SanitizedString string
@@ -46,12 +47,78 @@ func (s *SanitizedString) String() string {
 	return string(*s)
 }
 
+var pathUnsafeReplacer = strings.NewReplacer(
+	"\\", "＼",
+	"/", "／",
+	"<", "＜",
+	">", "＞",
+	":", "：",
+	"\"", "＂",
+	"|", "｜",
+	"?", "？",
+	"*", "＊",
+)
+
+var windowsReservedPathNames = map[string]struct{}{
+	"CON":  {},
+	"PRN":  {},
+	"AUX":  {},
+	"NUL":  {},
+	"COM1": {},
+	"COM2": {},
+	"COM3": {},
+	"COM4": {},
+	"COM5": {},
+	"COM6": {},
+	"COM7": {},
+	"COM8": {},
+	"COM9": {},
+	"LPT1": {},
+	"LPT2": {},
+	"LPT3": {},
+	"LPT4": {},
+	"LPT5": {},
+	"LPT6": {},
+	"LPT7": {},
+	"LPT8": {},
+	"LPT9": {},
+}
+
+func sanitizePathComponent(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, name)
+
+	name = pathUnsafeReplacer.Replace(name)
+	name = strings.Join(strings.Fields(name), " ")
+
+	if name == "" {
+		return "_"
+	}
+
+	if name == "." || name == ".." {
+		name = strings.ReplaceAll(name, ".", "．")
+	}
+
+	name = strings.TrimRightFunc(name, func(r rune) bool {
+		return unicode.IsSpace(r) || r == '.'
+	})
+	if name == "" {
+		return "_"
+	}
+
+	if _, reserved := windowsReservedPathNames[strings.ToUpper(name)]; reserved {
+		name += "_"
+	}
+
+	return name
+}
+
 func SanitizeForPath(s string) string {
-	r := strings.NewReplacer(
-		"\\", "",
-		"/", "",
-	)
-	return strings.Join(strings.Fields(r.Replace(s)), " ")
+	return sanitizePathComponent(s)
 }
 
 func SanitizePath(name string, whitespace string) string {
@@ -59,24 +126,11 @@ func SanitizePath(name string, whitespace string) string {
 		name = name[:250]
 	}
 
-	oldnew := []string{
-		"<", "",
-		">", "",
-		":", "",
-		"\"", "",
-		"|", "",
-		"?", "",
-		"*", "",
-	}
-
+	name = sanitizePathComponent(name)
 	if whitespace != "" {
-		oldnew = append(oldnew, " ", whitespace)
+		name = strings.ReplaceAll(name, " ", whitespace)
 	}
-
-	r := strings.NewReplacer(oldnew...)
-	name = r.Replace(name)
-
-	return strings.Join(strings.Fields(name), " ")
+	return name
 }
 
 func NumberWithPadding(value, total, padding int) string {

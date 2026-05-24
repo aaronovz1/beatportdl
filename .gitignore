@@ -4,6 +4,7 @@
 .env
 bin/
 temp/
+.gocache/
 error.log
 beatportdl-credentials.json
 beatportdl-config.yml
