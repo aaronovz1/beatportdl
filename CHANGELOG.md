@@ -1,8 +1,8 @@
 # Changelog
 
-## v1.0.8 - Unreleased
+## v1.0.8 - 2026-05-24
 
-This is the first maintained-fork release candidate from `aaronovz1/beatportdl`.
+This is the first maintained-fork release from `aaronovz1/beatportdl`.
 
 ### Fixed
 
