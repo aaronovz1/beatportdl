@@ -50,6 +50,24 @@ fi
 
 mkdir -p "$downloads_dir" "$sources_dir" "$builds_dir" "$prefix"
 
+retry() {
+  local attempts=$1
+  shift
+
+  local attempt=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$attempts" ]; then
+      return 1
+    fi
+    printf 'retrying (%d/%d): %s\n' "$attempt" "$attempts" "$*" >&2
+    attempt=$((attempt + 1))
+    sleep "$attempt"
+  done
+}
+
 verify_sha256() {
   local expected=$1
   local file=$2
@@ -70,9 +88,10 @@ ensure_zlib_source() {
   if [ ! -f "$tarball" ]; then
     rm -f "$tarball"
     for url in $zlib_urls; do
-      if curl -fsSLo "$tarball" "$url"; then
+      if retry 3 curl -fsSLo "$tarball" "$url"; then
         break
       fi
+      rm -f "$tarball"
     done
     if [ ! -f "$tarball" ]; then
       printf 'unable to download %s from configured sources\n' "$zlib_tarball" >&2
@@ -93,7 +112,10 @@ ensure_taglib_source() {
 
   if [ ! -d "$source_dir/.git" ]; then
     rm -rf "$source_dir"
-    git clone --depth 1 --branch "v${taglib_version}" --recurse-submodules --shallow-submodules "$taglib_url" "$source_dir" >&2
+    retry 3 git clone --depth 1 --branch "v${taglib_version}" --recurse-submodules --shallow-submodules "$taglib_url" "$source_dir" >&2 || {
+      printf 'unable to clone TagLib source from %s\n' "$taglib_url" >&2
+      exit 1
+    }
   fi
 
   if [ "$(git -C "$source_dir" rev-parse HEAD)" != "$taglib_commit" ]; then
