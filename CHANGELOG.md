@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.0.9 - 2026-05-31
+
+This release focuses on stabilization, downloader cleanup, and clearer user-facing behavior.
+
+### Fixed
+
+- Improved cross-platform path sanitization for filenames and directories, including Windows reserved names, dot-only names, and invalid trailing characters.
+- Added deterministic handling for colliding track filenames so same-run duplicates get stable ` (1)`, ` (2)`, ... suffixes instead of corrupting downloads.
+- Cleaned up leaked UUID-named temporary cover files across track, release, playlist, chart, label, and artist download flows.
+- Clarified common 400/403/login/quality failures with more specific API error hints for authentication, subscription-tier mismatches, quality restrictions, and territorial availability.
+- Clamped long progress-bar labels so extremely long track titles no longer overrun the terminal UI.
+- Added retry logic around pinned dependency downloads and source clones to reduce flaky Windows CI failures during dependency bootstrap.
+
+### Added
+
+- Regression tests for collision handling, cover temp cleanup, API error classification, and progress-label clamping.
+- Support guidance for common 400/403 causes in `SUPPORT.md`.
+
+### Known Follow-Up
+
+- Label query-parameter behavior remains intentionally scoped to release filtering, not per-track filtering inside matching releases.
+- Path-reuse/redownload behavior after metadata or directory-name changes still needs a tight reproducible case before further changes.
+
 ## v1.0.8 - 2026-05-24
 
 This is the first maintained-fork release from `aaronovz1/beatportdl`.
