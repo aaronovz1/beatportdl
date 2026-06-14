@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v1.0.11 - 2026-06-14
+
+This hotfix release focuses on no-op reruns after tracks already exist locally.
+
 ### Fixed
 
 - Avoid duplicate downloads when current Beatport metadata produces a different filename for an already-downloaded track by matching existing same-format files in the target directory by embedded track identity tags.
