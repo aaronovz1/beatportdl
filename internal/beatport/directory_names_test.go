@@ -35,7 +35,7 @@ func TestPlaylistDirectoryNameWithFirstTrackGenre(t *testing.T) {
 func TestPlaylistDirectoryNamePreservesTemplateSubdirectories(t *testing.T) {
 	playlist := Playlist{
 		ID:          99,
-		Name:        "ibiza global radio",
+		Name:        "Playlist Name",
 		TrackCount:  12,
 		CreatedDate: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 		UpdatedDate: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
@@ -46,7 +46,7 @@ func TestPlaylistDirectoryNamePreservesTemplateSubdirectories(t *testing.T) {
 	}
 
 	got := playlist.DirectoryNameWithFirstTrackGenre(naming, "Minimal / Deep Tech")
-	want := "Minimal ／ Deep Tech/ibiza global radio"
+	want := "Minimal ／ Deep Tech/Playlist Name"
 
 	if got != want {
 		t.Fatalf("DirectoryNameWithFirstTrackGenre() = %q, want %q", got, want)
