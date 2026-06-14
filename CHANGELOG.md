@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.10 - 2026-06-14
+
+This hotfix release focuses on Windows release usability and more resilient CI/release builds.
+
+### Fixed
+
+- Statically link the Windows MinGW runtime so the published `beatportdl-windows-amd64.exe` no longer fails to start with a missing `libwinpthread-1.dll` error.
+- Add a Windows release/CI guard that fails the build if the executable imports dynamic MinGW runtime DLLs such as `libwinpthread-1.dll`, `libstdc++-6.dll`, or `libgcc_s_seh-1.dll`.
+- Harden Docker builder source downloads with bounded retries for apt, Zig, zlib, and TagLib fetches.
+- Make the Docker builder select the correct pinned Zig tarball for both `amd64` CI runners and `arm64` local Docker builds.
+
 ## v1.0.9 - 2026-05-31
 
 This release focuses on stabilization, downloader cleanup, and clearer user-facing behavior.
