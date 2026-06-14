@@ -57,7 +57,7 @@ case "$target" in
     extld="$cxx"
     cgo_cflags="${cgo_cflags} -DTAGLIB_STATIC -Wall -Wno-deprecated"
     cgo_cxxflags="${cgo_cxxflags} -DTAGLIB_STATIC -Wall -Wno-deprecated"
-    extldflags="-static-libstdc++ -static-libgcc"
+    extldflags="-static -static-libstdc++ -static-libgcc"
     buildmode_args=()
     ;;
   *)

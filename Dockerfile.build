@@ -35,10 +35,14 @@ RUN curl -fsSLo /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig
 
 RUN mkdir -p /opt/src \
   && rm -f /tmp/zlib.tar.gz \
-  && for url in "https://zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz" "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz"; do \
-       if curl -fsSLo /tmp/zlib.tar.gz "$url"; then \
-         break; \
-       fi; \
+  && for attempt in 1 2 3; do \
+       for url in "https://zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz" "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz"; do \
+         rm -f /tmp/zlib.tar.gz; \
+         if curl -fsSLo /tmp/zlib.tar.gz "$url"; then \
+           break 2; \
+         fi; \
+       done; \
+       sleep "$attempt"; \
      done \
   && test -f /tmp/zlib.tar.gz \
   && echo "${ZLIB_TAR_SHA256}  /tmp/zlib.tar.gz" | sha256sum -c - \
@@ -46,7 +50,14 @@ RUN mkdir -p /opt/src \
   && mv "/opt/src/zlib-${ZLIB_VERSION}" /opt/src/zlib \
   && rm /tmp/zlib.tar.gz
 
-RUN git clone --depth 1 --branch "v${TAGLIB_VERSION}" --recurse-submodules --shallow-submodules https://github.com/taglib/taglib.git /opt/src/taglib \
+RUN for attempt in 1 2 3; do \
+       rm -rf /opt/src/taglib; \
+       if git clone --depth 1 --branch "v${TAGLIB_VERSION}" --recurse-submodules --shallow-submodules https://github.com/taglib/taglib.git /opt/src/taglib; then \
+         break; \
+       fi; \
+       sleep "$attempt"; \
+     done \
+  && test -d /opt/src/taglib/.git \
   && test "$(git -C /opt/src/taglib rev-parse HEAD)" = "${TAGLIB_COMMIT}" \
   && rm -rf /opt/src/taglib/.git
 

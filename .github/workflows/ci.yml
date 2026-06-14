@@ -110,3 +110,7 @@ jobs:
       - name: Build Windows artifact
         shell: msys2 {0}
         run: ./scripts/build-release-target.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
+
+      - name: Verify Windows runtime dependencies
+        shell: msys2 {0}
+        run: ./scripts/check-windows-runtime-deps.sh bin/beatportdl-windows-amd64.exe

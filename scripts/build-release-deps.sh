@@ -68,6 +68,26 @@ retry() {
   done
 }
 
+retry_clean() {
+  local attempts=$1
+  local cleanup_path=$2
+  shift 2
+
+  local attempt=1
+  while true; do
+    rm -rf "$cleanup_path"
+    if "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$attempts" ]; then
+      return 1
+    fi
+    printf 'retrying (%d/%d): %s\n' "$attempt" "$attempts" "$*" >&2
+    attempt=$((attempt + 1))
+    sleep "$attempt"
+  done
+}
+
 verify_sha256() {
   local expected=$1
   local file=$2
@@ -111,8 +131,7 @@ ensure_taglib_source() {
   local source_dir="$sources_dir/taglib-$taglib_version"
 
   if [ ! -d "$source_dir/.git" ]; then
-    rm -rf "$source_dir"
-    retry 3 git clone --depth 1 --branch "v${taglib_version}" --recurse-submodules --shallow-submodules "$taglib_url" "$source_dir" >&2 || {
+    retry_clean 3 "$source_dir" git clone --depth 1 --branch "v${taglib_version}" --recurse-submodules --shallow-submodules "$taglib_url" "$source_dir" >&2 || {
       printf 'unable to clone TagLib source from %s\n' "$taglib_url" >&2
       exit 1
     }

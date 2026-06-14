@@ -5,6 +5,7 @@
 bin/
 temp/
 .gocache/
+.third_party/
 error.log
 beatportdl-credentials.json
 beatportdl-config.yml
