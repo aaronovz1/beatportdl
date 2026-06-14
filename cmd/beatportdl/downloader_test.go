@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 	"unspok3n/beatportdl/config"
+	"unspok3n/beatportdl/internal/beatport"
 )
 
 func newTestApplication(trackExists string) *application {
@@ -147,6 +148,57 @@ func TestReserveTrackFilePathMatchesExistingFileByTrackIdentity(t *testing.T) {
 			t.Fatalf("reserveTrackFilePath() = %q, want %q", got, existingPath)
 		}
 	})
+}
+
+func TestHandleTrackDoesNotRequestCoverWhenTrackIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	app := newTestApplication("skip")
+	app.config.Quality = "lossless"
+	app.config.FixTags = true
+	app.config.CoverSize = "500x500"
+	app.config.TrackFileTemplate = "{number}. {artists} - {name} ({mix_name})"
+	app.config.ArtistsLimit = 3
+	app.config.ArtistsShortForm = "VA"
+	app.config.TrackNumberPadding = 2
+	app.downloadTrack = func(inst *beatport.Beatport, id int64, quality string) (*beatport.TrackDownload, error) {
+		return &beatport.TrackDownload{
+			Location:      "unused-when-track-is-skipped",
+			StreamQuality: ".flac",
+		}, nil
+	}
+
+	track := &beatport.Track{
+		ID:      12345,
+		Name:    beatport.SanitizedString("Existing"),
+		MixName: beatport.SanitizedString("Original Mix"),
+		Number:  1,
+		Artists: beatport.Artists{
+			{Name: "Artist"},
+		},
+		Release: beatport.Release{
+			TrackCount: 1,
+		},
+	}
+
+	existingPath := filepath.Join(dir, "01. Artist - Existing (Original Mix).flac")
+	if err := os.WriteFile(existingPath, []byte("existing"), 0600); err != nil {
+		t.Fatalf("WriteFile(%s): %v", existingPath, err)
+	}
+
+	cover := &trackCover{
+		download: func() (string, error) {
+			t.Fatal("cover should not be requested when the track is skipped")
+			return "", nil
+		},
+	}
+
+	processed, err := app.handleTrack(nil, track, dir, cover)
+	if err != nil {
+		t.Fatalf("handleTrack() = %v", err)
+	}
+	if processed {
+		t.Fatal("handleTrack() processed skipped track")
+	}
 }
 
 func TestCleanupCoverTempRemovesTemporaryCoverFile(t *testing.T) {

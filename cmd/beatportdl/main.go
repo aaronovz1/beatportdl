@@ -36,6 +36,8 @@ type application struct {
 	activeFiles           map[string]int64
 	activeFilesMutex      sync.RWMutex
 	readTrackFileIdentity func(path string) (trackFileIdentity, error)
+	downloadTrack         func(inst *beatport.Beatport, id int64, quality string) (*beatport.TrackDownload, error)
+	streamTrack           func(inst *beatport.Beatport, id int64) (*beatport.TrackStream, error)
 	trackIdentityFiles    map[string]map[string]string
 
 	bp *beatport.Beatport
