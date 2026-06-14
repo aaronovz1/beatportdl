@@ -14,8 +14,9 @@ builds_dir=${THIRD_PARTY_BUILDS_DIR:-"$third_party_root/builds"}
 
 zlib_version=${ZLIB_VERSION:-1.3.2}
 zlib_tarball="zlib-${zlib_version}.tar.gz"
-zlib_urls=${ZLIB_URLS:-"https://zlib.net/fossils/${zlib_tarball} https://zlib.net/${zlib_tarball}"}
+zlib_urls=${ZLIB_URLS:-"https://zlib.net/fossils/${zlib_tarball} https://zlib.net/${zlib_tarball} https://github.com/madler/zlib/archive/refs/tags/v${zlib_version}.tar.gz"}
 zlib_sha256=${ZLIB_SHA256:-bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16}
+zlib_github_sha256=${ZLIB_GITHUB_SHA256:-b99a0b86c0ba9360ec7e78c4f1e43b1cbdf1e6936c8fa0f6835c0cd694a495a1}
 
 taglib_version=${TAGLIB_VERSION:-2.3}
 taglib_commit=${TAGLIB_COMMIT:-1b94b93762636ebe5733180c3e825be4621e4c7f}
@@ -100,6 +101,17 @@ verify_sha256() {
   fi
 }
 
+verify_zlib_sha256() {
+  local file=$1
+  local actual
+
+  actual=$($hash_cmd "$file" | awk '{print $1}')
+  if [ "$actual" != "$zlib_sha256" ] && [ "$actual" != "$zlib_github_sha256" ]; then
+    printf 'sha256 mismatch for %s\nexpected %s or %s\ngot      %s\n' "$file" "$zlib_sha256" "$zlib_github_sha256" "$actual" >&2
+    exit 1
+  fi
+}
+
 ensure_zlib_source() {
   local tarball="$downloads_dir/$zlib_tarball"
   local source_dir="$sources_dir/zlib-$zlib_version"
@@ -118,7 +130,7 @@ ensure_zlib_source() {
       exit 1
     fi
   fi
-  verify_sha256 "$zlib_sha256" "$tarball"
+  verify_zlib_sha256 "$tarball"
 
   if [ ! -d "$source_dir" ]; then
     tar -xzf "$tarball" -C "$sources_dir"

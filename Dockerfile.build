@@ -8,6 +8,7 @@ ARG ZIG_X86_64_LINUX_SHA256=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd4
 ARG ZIG_AARCH64_LINUX_SHA256=ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17
 ARG ZLIB_VERSION=1.3.2
 ARG ZLIB_TAR_SHA256=bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
+ARG ZLIB_GITHUB_TAR_SHA256=b99a0b86c0ba9360ec7e78c4f1e43b1cbdf1e6936c8fa0f6835c0cd694a495a1
 ARG TAGLIB_VERSION=2.3
 ARG TAGLIB_COMMIT=1b94b93762636ebe5733180c3e825be4621e4c7f
 
@@ -49,17 +50,24 @@ RUN arch="$(dpkg --print-architecture)" \
 
 RUN mkdir -p /opt/src \
   && rm -f /tmp/zlib.tar.gz \
+  && zlib_downloaded=0 \
   && for attempt in 1 2 3; do \
-       for url in "https://zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz" "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz"; do \
+       for spec in \
+         "https://zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz ${ZLIB_TAR_SHA256}" \
+         "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz ${ZLIB_TAR_SHA256}" \
+         "https://github.com/madler/zlib/archive/refs/tags/v${ZLIB_VERSION}.tar.gz ${ZLIB_GITHUB_TAR_SHA256}"; do \
+         url="${spec% *}"; \
+         sha256="${spec##* }"; \
          rm -f /tmp/zlib.tar.gz; \
-         if curl -fsSLo /tmp/zlib.tar.gz --connect-timeout 20 --max-time 180 --retry 3 --retry-delay 2 --retry-all-errors "$url"; then \
+         if curl -fsSLo /tmp/zlib.tar.gz --connect-timeout 20 --max-time 180 --retry 3 --retry-delay 2 --retry-all-errors "$url" \
+           && echo "${sha256}  /tmp/zlib.tar.gz" | sha256sum -c -; then \
+           zlib_downloaded=1; \
            break 2; \
          fi; \
        done; \
        sleep "$attempt"; \
      done \
-  && test -f /tmp/zlib.tar.gz \
-  && echo "${ZLIB_TAR_SHA256}  /tmp/zlib.tar.gz" | sha256sum -c - \
+  && test "$zlib_downloaded" = "1" \
   && tar -xzf /tmp/zlib.tar.gz -C /opt/src \
   && mv "/opt/src/zlib-${ZLIB_VERSION}" /opt/src/zlib \
   && rm /tmp/zlib.tar.gz
