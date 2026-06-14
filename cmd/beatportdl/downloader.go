@@ -225,7 +225,133 @@ var (
 	ErrTrackFileExists = errors.New("file already exists")
 )
 
-func (app *application) reserveTrackFilePath(directory, fileName, fileExtension string, trackID int64) (string, error) {
+type trackFileIdentity struct {
+	TrackID string
+	ISRC    string
+}
+
+func (identity trackFileIdentity) keys() []string {
+	var keys []string
+	if identity.TrackID != "" {
+		keys = append(keys, trackIDIdentityKey(identity.TrackID))
+	}
+	if identity.ISRC != "" {
+		keys = append(keys, isrcIdentityKey(identity.ISRC))
+	}
+	return keys
+}
+
+func trackIDIdentityKey(trackID string) string {
+	return "track_id:" + trackID
+}
+
+func isrcIdentityKey(isrc string) string {
+	return "isrc:" + strings.ToUpper(isrc)
+}
+
+func (app *application) readExistingTrackFileIdentity(path string) (trackFileIdentity, error) {
+	if app.readTrackFileIdentity != nil {
+		return app.readTrackFileIdentity(path)
+	}
+
+	file, err := taglib.Read(path)
+	if err != nil {
+		return trackFileIdentity{}, err
+	}
+	defer file.Close()
+
+	mappingsByFormat := app.config.TagMappings
+	if mappingsByFormat == nil {
+		mappingsByFormat = config.DefaultTagMappings
+	}
+
+	format := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+	mappings := mappingsByFormat[format]
+	return trackFileIdentity{
+		TrackID: readMappedTagProperty(file, mappings, "track_id"),
+		ISRC:    readMappedTagProperty(file, mappings, "track_isrc"),
+	}, nil
+}
+
+func readMappedTagProperty(file *taglib.File, mappings map[string]string, field string) string {
+	property := mappings[field]
+	if property == "" {
+		return ""
+	}
+	property = strings.TrimSuffix(property, rawTagSuffix)
+	return strings.TrimSpace(file.GetProperty(property))
+}
+
+func (app *application) findExistingTrackFileByIdentity(directory, fileExtension string, trackID int64, isrc string) (string, bool) {
+	if trackID == 0 && isrc == "" {
+		return "", false
+	}
+
+	identityFiles := app.trackIdentityFilesForDirectory(directory, fileExtension)
+	if trackID != 0 {
+		if path, ok := identityFiles[trackIDIdentityKey(strconv.FormatInt(trackID, 10))]; ok {
+			return path, true
+		}
+	}
+	if isrc != "" {
+		if path, ok := identityFiles[isrcIdentityKey(isrc)]; ok {
+			return path, true
+		}
+	}
+
+	return "", false
+}
+
+func (app *application) trackIdentityFilesForDirectory(directory, fileExtension string) map[string]string {
+	cacheKey := directory + "\x00" + strings.ToLower(fileExtension)
+	if app.trackIdentityFiles == nil {
+		app.trackIdentityFiles = make(map[string]map[string]string)
+	}
+	if identityFiles, ok := app.trackIdentityFiles[cacheKey]; ok {
+		return identityFiles
+	}
+
+	identityFiles := make(map[string]string)
+	app.trackIdentityFiles[cacheKey] = identityFiles
+
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return identityFiles
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), fileExtension) {
+			continue
+		}
+
+		candidate := filepath.Join(directory, entry.Name())
+		identity, err := app.readExistingTrackFileIdentity(candidate)
+		if err != nil {
+			continue
+		}
+		for _, key := range identity.keys() {
+			if _, exists := identityFiles[key]; !exists {
+				identityFiles[key] = candidate
+			}
+		}
+	}
+
+	return identityFiles
+}
+
+func (app *application) handleExistingTrackPath(path string) (string, error) {
+	switch app.config.TrackExists {
+	case "skip":
+		return "", nil
+	case "update", "overwrite":
+		return path, nil
+	case "error":
+		return "", ErrTrackFileExists
+	}
+	return path, nil
+}
+
+func (app *application) reserveTrackFilePath(directory, fileName, fileExtension string, trackID int64, isrc string) (string, error) {
 	basePath := fmt.Sprintf("%s/%s%s", directory, fileName, fileExtension)
 
 	app.activeFilesMutex.Lock()
@@ -244,15 +370,19 @@ func (app *application) reserveTrackFilePath(directory, fileName, fileExtension 
 	}
 
 	if _, err := os.Stat(basePath); err == nil {
-		switch app.config.TrackExists {
-		case "skip":
-			return "", nil
-		case "update", "overwrite":
-			app.activeFiles[basePath] = trackID
-			return basePath, nil
-		case "error":
-			return "", ErrTrackFileExists
+		path, err := app.handleExistingTrackPath(basePath)
+		if path != "" {
+			app.activeFiles[path] = trackID
 		}
+		return path, err
+	}
+
+	if existingPath, ok := app.findExistingTrackFileByIdentity(directory, fileExtension, trackID, isrc); ok {
+		path, err := app.handleExistingTrackPath(existingPath)
+		if path != "" {
+			app.activeFiles[path] = trackID
+		}
+		return path, err
 	}
 
 	app.activeFiles[basePath] = trackID
@@ -306,7 +436,7 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 			KeySystem:          app.config.KeySystem,
 		},
 	)
-	filePath, err := app.reserveTrackFilePath(directory, fileName, fileExtension, track.ID)
+	filePath, err := app.reserveTrackFilePath(directory, fileName, fileExtension, track.ID, track.ISRC)
 	if err != nil {
 		return "", err
 	}

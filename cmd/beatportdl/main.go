@@ -32,9 +32,11 @@ type application struct {
 	globalSem   chan struct{}
 	pbp         *mpb.Progress
 
-	urls             []string
-	activeFiles      map[string]int64
-	activeFilesMutex sync.RWMutex
+	urls                  []string
+	activeFiles           map[string]int64
+	activeFilesMutex      sync.RWMutex
+	readTrackFileIdentity func(path string) (trackFileIdentity, error)
+	trackIdentityFiles    map[string]map[string]string
 
 	bp *beatport.Beatport
 	bs *beatport.Beatport

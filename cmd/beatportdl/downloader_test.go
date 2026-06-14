@@ -20,12 +20,12 @@ func TestReserveTrackFilePathUsesSuffixForActiveCollision(t *testing.T) {
 	app := newTestApplication("update")
 	dir := t.TempDir()
 
-	first, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 101)
+	first, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 101, "")
 	if err != nil {
 		t.Fatalf("reserveTrackFilePath() first = %v", err)
 	}
 
-	second, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 202)
+	second, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 202, "")
 	if err != nil {
 		t.Fatalf("reserveTrackFilePath() second = %v", err)
 	}
@@ -44,7 +44,7 @@ func TestReserveTrackFilePathUsesSuffixForFinishedRunCollision(t *testing.T) {
 	app := newTestApplication("update")
 	dir := t.TempDir()
 
-	first, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 101)
+	first, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 101, "")
 	if err != nil {
 		t.Fatalf("reserveTrackFilePath() first = %v", err)
 	}
@@ -53,7 +53,7 @@ func TestReserveTrackFilePathUsesSuffixForFinishedRunCollision(t *testing.T) {
 		t.Fatalf("WriteFile(%s): %v", first, err)
 	}
 
-	second, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 202)
+	second, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 202, "")
 	if err != nil {
 		t.Fatalf("reserveTrackFilePath() second = %v", err)
 	}
@@ -73,7 +73,7 @@ func TestReserveTrackFilePathRespectsTrackExistsForPreexistingFile(t *testing.T)
 
 	t.Run("skip", func(t *testing.T) {
 		app := newTestApplication("skip")
-		got, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 101)
+		got, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 101, "")
 		if err != nil {
 			t.Fatalf("reserveTrackFilePath() = %v", err)
 		}
@@ -84,7 +84,7 @@ func TestReserveTrackFilePathRespectsTrackExistsForPreexistingFile(t *testing.T)
 
 	t.Run("update", func(t *testing.T) {
 		app := newTestApplication("update")
-		got, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 101)
+		got, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 101, "")
 		if err != nil {
 			t.Fatalf("reserveTrackFilePath() = %v", err)
 		}
@@ -95,12 +95,56 @@ func TestReserveTrackFilePathRespectsTrackExistsForPreexistingFile(t *testing.T)
 
 	t.Run("error", func(t *testing.T) {
 		app := newTestApplication("error")
-		got, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 101)
+		got, err := app.reserveTrackFilePath(dir, "01. Artist - Track", ".flac", 101, "")
 		if err != ErrTrackFileExists {
 			t.Fatalf("reserveTrackFilePath() err = %v, want %v", err, ErrTrackFileExists)
 		}
 		if got != "" {
 			t.Fatalf("reserveTrackFilePath() = %q, want empty path", got)
+		}
+	})
+}
+
+func TestReserveTrackFilePathMatchesExistingFileByTrackIdentity(t *testing.T) {
+	dir := t.TempDir()
+	existingPath := filepath.Join(dir, "Artist One, Artist Two, Antagonite - Example Track (Extended Mix).flac")
+	if err := os.WriteFile(existingPath, []byte("existing"), 0600); err != nil {
+		t.Fatalf("WriteFile(%s): %v", existingPath, err)
+	}
+
+	t.Run("skip", func(t *testing.T) {
+		app := newTestApplication("skip")
+		app.readTrackFileIdentity = func(path string) (trackFileIdentity, error) {
+			if path == existingPath {
+				return trackFileIdentity{TrackID: "12345", ISRC: "GBABC2600001"}, nil
+			}
+			return trackFileIdentity{}, nil
+		}
+
+		got, err := app.reserveTrackFilePath(dir, "Artist One, Artist Two, Antâgonite - Example Track (Extended Mix)", ".flac", 12345, "GBABC2600001")
+		if err != nil {
+			t.Fatalf("reserveTrackFilePath() = %v", err)
+		}
+		if got != "" {
+			t.Fatalf("reserveTrackFilePath() = %q, want empty path", got)
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		app := newTestApplication("update")
+		app.readTrackFileIdentity = func(path string) (trackFileIdentity, error) {
+			if path == existingPath {
+				return trackFileIdentity{TrackID: "12345", ISRC: "GBABC2600001"}, nil
+			}
+			return trackFileIdentity{}, nil
+		}
+
+		got, err := app.reserveTrackFilePath(dir, "Artist One, Artist Two, Antâgonite - Example Track (Extended Mix)", ".flac", 12345, "GBABC2600001")
+		if err != nil {
+			t.Fatalf("reserveTrackFilePath() = %v", err)
+		}
+		if got != existingPath {
+			t.Fatalf("reserveTrackFilePath() = %q, want %q", got, existingPath)
 		}
 	})
 }

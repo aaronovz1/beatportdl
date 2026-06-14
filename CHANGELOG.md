@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Avoid duplicate downloads when current Beatport metadata produces a different filename for an already-downloaded track by matching existing same-format files in the target directory by embedded track identity tags.
+
 ## v1.0.10 - 2026-06-14
 
 This hotfix release focuses on directory-template correctness, Windows release usability, and more resilient CI/release builds.
