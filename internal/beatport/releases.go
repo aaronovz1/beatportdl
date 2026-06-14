@@ -102,5 +102,5 @@ func (r *Release) DirectoryName(n NamingPreferences) string {
 		"label":          SanitizeForPath(r.Label.Name),
 	}
 	directoryName := ParseTemplate(n.Template, templateValues)
-	return SanitizePath(directoryName, n.Whitespace)
+	return SanitizeDirectoryPath(directoryName, n.Whitespace)
 }

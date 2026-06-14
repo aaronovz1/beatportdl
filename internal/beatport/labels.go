@@ -25,7 +25,7 @@ func (l *Label) DirectoryName(n NamingPreferences) string {
 		"updated_date": l.Updated.Format("2006-01-02"),
 	}
 	directoryName := ParseTemplate(n.Template, templateValues)
-	return SanitizePath(directoryName, n.Whitespace)
+	return SanitizeDirectoryPath(directoryName, n.Whitespace)
 }
 
 func (l *Label) StoreUrl() string {

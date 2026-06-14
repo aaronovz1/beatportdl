@@ -47,7 +47,7 @@ func (p *Playlist) DirectoryName(n NamingPreferences) string {
 		"updated_date": p.UpdatedDate.Format("2006-01-02"),
 	}
 	directoryName := ParseTemplate(n.Template, templateValues)
-	return SanitizePath(directoryName, n.Whitespace)
+	return SanitizeDirectoryPath(directoryName, n.Whitespace)
 }
 
 // DirectoryNameWithFirstTrackGenre creates a directory name using the genre from the first track
@@ -69,7 +69,7 @@ func (p *Playlist) DirectoryNameWithFirstTrackGenre(n NamingPreferences, firstTr
 		"updated_date": p.UpdatedDate.Format("2006-01-02"),
 	}
 	directoryName := ParseTemplate(n.Template, templateValues)
-	return SanitizePath(directoryName, n.Whitespace)
+	return SanitizeDirectoryPath(directoryName, n.Whitespace)
 }
 
 func (b *Beatport) GetPlaylist(id int64) (*Playlist, error) {

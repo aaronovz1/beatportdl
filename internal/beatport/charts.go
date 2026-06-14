@@ -42,7 +42,7 @@ func (c *Chart) DirectoryName(n NamingPreferences) string {
 		"updated_date":   c.ChangeDate.Format("2006-01-02"),
 	}
 	directoryName := ParseTemplate(n.Template, templateValues)
-	return SanitizePath(directoryName, n.Whitespace)
+	return SanitizeDirectoryPath(directoryName, n.Whitespace)
 }
 
 // DirectoryNameWithFirstTrackGenre creates a directory name using the genre from the first track
@@ -59,7 +59,7 @@ func (c *Chart) DirectoryNameWithFirstTrackGenre(n NamingPreferences, firstTrack
 		"updated_date":   c.ChangeDate.Format("2006-01-02"),
 	}
 	directoryName := ParseTemplate(n.Template, templateValues)
-	return SanitizePath(directoryName, n.Whitespace)
+	return SanitizeDirectoryPath(directoryName, n.Whitespace)
 }
 
 func (b *Beatport) GetChart(id int64) (*Chart, error) {

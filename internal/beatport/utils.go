@@ -133,6 +133,14 @@ func SanitizePath(name string, whitespace string) string {
 	return name
 }
 
+func SanitizeDirectoryPath(name string, whitespace string) string {
+	components := strings.Split(name, "/")
+	for i, component := range components {
+		components[i] = SanitizePath(component, whitespace)
+	}
+	return strings.Join(components, "/")
+}
+
 func NumberWithPadding(value, total, padding int) string {
 	if padding == 0 {
 		padding = len(strconv.Itoa(total))

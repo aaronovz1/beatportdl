@@ -22,7 +22,7 @@ func (a *Artist) DirectoryName(n NamingPreferences) string {
 		"slug": a.Slug,
 	}
 	directoryName := ParseTemplate(n.Template, templateValues)
-	return SanitizePath(directoryName, n.Whitespace)
+	return SanitizeDirectoryPath(directoryName, n.Whitespace)
 }
 
 func (a *Artists) Display(limit int, shortForm string) string {
