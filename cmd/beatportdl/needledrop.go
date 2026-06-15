@@ -137,15 +137,55 @@ func (app *application) downloadSegments(path string, segmentUrls []string, key 
 }
 
 func remuxToM4A(input, output string) error {
+	tempFile, err := os.CreateTemp(filepath.Dir(output), "."+filepath.Base(output)+".*.m4a")
+	if err != nil {
+		return fmt.Errorf("create temp output: %w", err)
+	}
+	tempOutput := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		_ = os.Remove(tempOutput)
+		return fmt.Errorf("close temp output: %w", err)
+	}
+	_ = os.Remove(tempOutput)
+	keepTemp := false
+	defer func() {
+		if !keepTemp {
+			_ = os.Remove(tempOutput)
+		}
+	}()
+
 	cmd := exec.Command("ffmpeg",
+		"-y",
 		"-i", input,
 		"-map_metadata", "-1",
 		"-c:a", "copy",
-		output,
+		tempOutput,
 	)
-	err := cmd.Run()
-	if err != nil {
+	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("ffmpeg: %w", err)
+	}
+	if err := validateM4A(tempOutput); err != nil {
+		return fmt.Errorf("validate remuxed m4a: %w", err)
+	}
+	if err := os.Rename(tempOutput, output); err != nil {
+		return fmt.Errorf("move remuxed m4a into place: %w", err)
+	}
+	keepTemp = true
+	return nil
+}
+
+func validateM4A(path string) error {
+	cmd := exec.Command("ffmpeg", "-v", "error", "-i", path, "-f", "null", "-")
+	output, err := cmd.CombinedOutput()
+	message := strings.TrimSpace(string(output))
+	if err != nil {
+		if message == "" {
+			return fmt.Errorf("ffmpeg: %w", err)
+		}
+		return fmt.Errorf("ffmpeg: %w: %s", err, message)
+	}
+	if message != "" {
+		return fmt.Errorf("ffmpeg reported decode errors: %s", message)
 	}
 	return nil
 }

@@ -70,11 +70,18 @@ func (app *application) semRelease(s chan struct{}) {
 }
 
 func (app *application) downloadFile(url string, destination string, pbPrefix string) error {
-	out, err := os.Create(destination)
+	out, err := os.CreateTemp(filepath.Dir(destination), "."+filepath.Base(destination)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer out.Close()
+	tempPath := out.Name()
+	keepTemp := false
+	defer func() {
+		_ = out.Close()
+		if !keepTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -86,24 +93,38 @@ func (app *application) downloadFile(url string, destination string, pbPrefix st
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
 
+	var written int64
 	if pbPrefix != "" {
-		contentLength, _ := strconv.Atoi(resp.Header.Get("Content-Length"))
-		bar := app.pbp.AddBar(int64(contentLength), ProgressBarOptions(pbPrefix)...)
+		contentLength := resp.ContentLength
+		if contentLength < 0 {
+			contentLength, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+		}
+		bar := app.pbp.AddBar(contentLength, ProgressBarOptions(pbPrefix)...)
 
 		proxyReader := bar.ProxyReader(resp.Body)
 		defer proxyReader.Close()
 
-		_, err = io.Copy(out, proxyReader)
+		written, err = io.Copy(out, proxyReader)
 		if err != nil {
 			return err
 		}
 	} else {
-		_, err = io.Copy(out, resp.Body)
+		written, err = io.Copy(out, resp.Body)
 		if err != nil {
 			return err
 		}
 	}
 
+	if resp.ContentLength >= 0 && written != resp.ContentLength {
+		return fmt.Errorf("download size mismatch: got %d bytes, want %d", written, resp.ContentLength)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close file: %w", err)
+	}
+	if err := os.Rename(tempPath, destination); err != nil {
+		return fmt.Errorf("move file into place: %w", err)
+	}
+	keepTemp = true
 	return nil
 }
 
