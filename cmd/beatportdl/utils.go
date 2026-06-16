@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,7 +32,7 @@ func (app *application) globalWorker(fn func()) {
 		defer app.semRelease(app.globalSem)
 		defer func() {
 			if err := recover(); err != nil {
-				fmt.Printf(fmt.Errorf("%s", err).Error())
+				app.logWorkerPanic("global worker", err)
 			}
 		}()
 		fn()
@@ -54,11 +55,23 @@ func (app *application) downloadWorker(wg *sync.WaitGroup, fn func()) {
 
 		defer func() {
 			if err := recover(); err != nil {
-				fmt.Printf(fmt.Errorf("%s", err).Error())
+				app.logWorkerPanic("download worker", err)
 			}
 		}()
 		fn()
 	}()
+}
+
+func (app *application) logWorkerPanic(worker string, recovered interface{}) {
+	message := fmt.Sprintf("%s panic: %v\n%s", worker, recovered, debug.Stack())
+	if app.logWriter != nil {
+		fmt.Fprint(app.logWriter, message)
+	} else {
+		fmt.Fprint(os.Stderr, message)
+	}
+	if app.logFile != nil {
+		_, _ = app.logFile.WriteString(message)
+	}
 }
 
 func (app *application) semAcquire(s chan struct{}) {

@@ -38,19 +38,31 @@ func getStreamSegments(stream string) (*[]string, *StreamKey, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	media, ok := playlist.(*m3u8.MediaPlaylist)
+	if !ok {
+		return nil, nil, fmt.Errorf("stream playlist is not a media playlist")
+	}
 	u, err := url.Parse(stream)
 	if err != nil {
 		return nil, nil, err
 	}
 	base := u.Scheme + "://" + u.Host + path.Dir(u.Path) + "/"
-	media := playlist.(*m3u8.MediaPlaylist)
 	var segments []string
 	var streamKey StreamKey
 	for i, segment := range media.Segments {
 		if segment == nil {
 			break
 		}
+		if segment.URI == "" {
+			return nil, nil, fmt.Errorf("stream segment %d has empty URI", i)
+		}
 		if i == 0 {
+			if segment.Key == nil || segment.Key.URI == "" {
+				return nil, nil, fmt.Errorf("stream segment %d is missing an encryption key URI", i)
+			}
+			if segment.Key.IV == "" {
+				return nil, nil, fmt.Errorf("stream segment %d is missing an encryption key IV", i)
+			}
 			req, err := http.Get(base + segment.Key.URI)
 			if err != nil {
 				return nil, nil, err

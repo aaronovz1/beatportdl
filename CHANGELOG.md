@@ -5,6 +5,7 @@
 ### Fixed
 
 - Avoid accepting partial or corrupt downloads by staging files through temporary paths, checking HTTP download sizes when available, and validating HLS-remuxed M4A files before moving them into place.
+- Return a clear HLS stream error instead of panicking when a playlist segment is missing encryption-key metadata, and include stack traces for any recovered worker panic.
 
 ## v1.0.11 - 2026-06-14
 
