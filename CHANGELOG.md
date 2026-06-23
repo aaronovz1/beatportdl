@@ -2,10 +2,15 @@
 
 ## Unreleased
 
+## v1.0.12 - 2026-06-23
+
+This hotfix release focuses on safer downloads and duplicate detection when different tracks resolve to the same filename.
+
 ### Fixed
 
 - Avoid accepting partial or corrupt downloads by staging files through temporary paths, checking HTTP download sizes when available, and validating HLS-remuxed M4A files before moving them into place.
 - Return a clear HLS stream error instead of panicking when a playlist segment is missing encryption-key metadata, and include stack traces for any recovered worker panic.
+- Avoid treating different tracks as duplicates when artist abbreviation or metadata produces the same computed filename; existing files with different embedded track identity now get a suffixed filename instead of being skipped or updated.
 
 ## v1.0.11 - 2026-06-14
 

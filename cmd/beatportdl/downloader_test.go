@@ -65,6 +65,32 @@ func TestReserveTrackFilePathUsesSuffixForFinishedRunCollision(t *testing.T) {
 	}
 }
 
+func TestReserveTrackFilePathUsesSuffixWhenSameFilenameBelongsToDifferentTrack(t *testing.T) {
+	app := newTestApplication("skip")
+	dir := t.TempDir()
+	existingPath := filepath.Join(dir, "VA - I Adore You (Extended Mix).flac")
+	if err := os.WriteFile(existingPath, []byte("existing"), 0600); err != nil {
+		t.Fatalf("WriteFile(%s): %v", existingPath, err)
+	}
+
+	app.readTrackFileIdentity = func(path string) (trackFileIdentity, error) {
+		if path == existingPath {
+			return trackFileIdentity{TrackID: "101", ISRC: "GBABC2600001"}, nil
+		}
+		return trackFileIdentity{}, nil
+	}
+
+	got, err := app.reserveTrackFilePath(dir, "VA - I Adore You (Extended Mix)", ".flac", 202, "GBABC2600002")
+	if err != nil {
+		t.Fatalf("reserveTrackFilePath() = %v", err)
+	}
+
+	want := filepath.Join(dir, "VA - I Adore You (Extended Mix) (1).flac")
+	if got != want {
+		t.Fatalf("reserveTrackFilePath() = %q, want %q", got, want)
+	}
+}
+
 func TestReserveTrackFilePathRespectsTrackExistsForPreexistingFile(t *testing.T) {
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "01. Artist - Track.flac")

@@ -292,6 +292,17 @@ type trackFileIdentity struct {
 	ISRC    string
 }
 
+func (identity trackFileIdentity) hasKeys() bool {
+	return identity.TrackID != "" || identity.ISRC != ""
+}
+
+func (identity trackFileIdentity) matches(trackID int64, isrc string) bool {
+	if trackID != 0 && identity.TrackID == strconv.FormatInt(trackID, 10) {
+		return true
+	}
+	return isrc != "" && strings.EqualFold(identity.ISRC, isrc)
+}
+
 func (identity trackFileIdentity) keys() []string {
 	var keys []string
 	if identity.TrackID != "" {
@@ -427,6 +438,36 @@ func (app *application) handleExistingTrackPath(path string) (string, error) {
 	return path, nil
 }
 
+func (app *application) existingTrackFileBelongsToDifferentTrack(path string, trackID int64, isrc string) bool {
+	if trackID == 0 && isrc == "" {
+		return false
+	}
+
+	identity, err := app.readExistingTrackFileIdentity(path)
+	if err != nil || !identity.hasKeys() {
+		return false
+	}
+	return !identity.matches(trackID, isrc)
+}
+
+func (app *application) reserveSuffixedTrackFilePath(directory, fileName, fileExtension string, trackID int64) (string, error) {
+	for i := 1; ; i++ {
+		candidate := fmt.Sprintf("%s/%s (%d)%s", directory, fileName, i, fileExtension)
+		if owner, exists := app.activeFiles[candidate]; exists && owner != trackID {
+			continue
+		}
+
+		if _, err := os.Stat(candidate); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+
+		app.activeFiles[candidate] = trackID
+		return candidate, nil
+	}
+}
+
 func (app *application) reserveTrackFilePath(directory, fileName, fileExtension string, trackID int64, isrc string) (string, error) {
 	basePath := fmt.Sprintf("%s/%s%s", directory, fileName, fileExtension)
 
@@ -434,27 +475,23 @@ func (app *application) reserveTrackFilePath(directory, fileName, fileExtension 
 	defer app.activeFilesMutex.Unlock()
 
 	if owner, exists := app.activeFiles[basePath]; exists && owner != trackID {
-		i := 1
-		for {
-			candidate := fmt.Sprintf("%s/%s (%d)%s", directory, fileName, i, fileExtension)
-			if owner, exists := app.activeFiles[candidate]; !exists || owner == trackID {
-				app.activeFiles[candidate] = trackID
-				return candidate, nil
-			}
-			i++
-		}
+		return app.reserveSuffixedTrackFilePath(directory, fileName, fileExtension, trackID)
 	}
 
-	if _, err := os.Stat(basePath); err == nil {
-		path, err := app.handleExistingTrackPath(basePath)
+	if existingPath, ok := app.findExistingTrackFileByIdentity(directory, fileExtension, trackID, isrc); ok {
+		path, err := app.handleExistingTrackPath(existingPath)
 		if path != "" {
 			app.activeFiles[path] = trackID
 		}
 		return path, err
 	}
 
-	if existingPath, ok := app.findExistingTrackFileByIdentity(directory, fileExtension, trackID, isrc); ok {
-		path, err := app.handleExistingTrackPath(existingPath)
+	if _, err := os.Stat(basePath); err == nil {
+		if app.existingTrackFileBelongsToDifferentTrack(basePath, trackID, isrc) {
+			return app.reserveSuffixedTrackFilePath(directory, fileName, fileExtension, trackID)
+		}
+
+		path, err := app.handleExistingTrackPath(basePath)
 		if path != "" {
 			app.activeFiles[path] = trackID
 		}
