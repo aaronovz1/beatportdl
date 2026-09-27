@@ -81,7 +81,10 @@ func (f *File) GetProperty(property string) string {
 	propertyC := C.CString(property)
 	defer C.free(unsafe.Pointer(propertyC))
 	valueC := C.taglib_property_get(f.fp, propertyC)
-	defer C.free(unsafe.Pointer(valueC))
+	defer C.taglib_property_free(valueC)
+	if valueC == nil || *valueC == nil {
+		return ""
+	}
 	value := C.GoString(*valueC)
 	return value
 }

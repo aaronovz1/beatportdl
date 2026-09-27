@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v1.0.13 - 2026-09-27
+
+This hotfix release improves download reliability and standalone track organization.
+
+### Fixed
+
+- Avoid download-worker panics while checking existing audio files that do not contain the configured track identity tags.
+- Retry transient API timeouts for safe read requests instead of aborting playlist and other catalog downloads after the first stalled response.
+- Store standalone track downloads in their genre directory instead of a catalog-number-prefixed release directory.
+
 ## v1.0.12 - 2026-06-23
 
 This hotfix release focuses on safer downloads and duplicate detection when different tracks resolve to the same filename.

@@ -17,6 +17,34 @@ func newTestApplication(trackExists string) *application {
 	}
 }
 
+func TestSetupTrackDownloadsDirectoryUsesTrackGenre(t *testing.T) {
+	baseDir := t.TempDir()
+	app := newTestApplication("update")
+	app.config.SortByContext = true
+	app.config.ReleaseDirectoryTemplate = "[{catalog_number}] {artists} - {name}"
+
+	track := &beatport.Track{
+		Genre: beatport.Genre{Name: "Minimal / Deep Tech"},
+		Release: beatport.Release{
+			Name:          beatport.SanitizedString("Unexpected Release Directory"),
+			CatalogNumber: beatport.SanitizedString("1200214858032"),
+		},
+	}
+
+	got, err := app.setupTrackDownloadsDirectory(baseDir, track)
+	if err != nil {
+		t.Fatalf("setupTrackDownloadsDirectory() = %v", err)
+	}
+
+	want := filepath.Join(baseDir, "Minimal ／ Deep Tech")
+	if got != want {
+		t.Fatalf("setupTrackDownloadsDirectory() = %q, want %q", got, want)
+	}
+	if info, err := os.Stat(want); err != nil || !info.IsDir() {
+		t.Fatalf("expected genre directory to exist at %q, stat = %v", want, err)
+	}
+}
+
 func TestReserveTrackFilePathUsesSuffixForActiveCollision(t *testing.T) {
 	app := newTestApplication("update")
 	dir := t.TempDir()

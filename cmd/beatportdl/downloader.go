@@ -133,6 +133,14 @@ func (app *application) setupDownloadsDirectory(baseDir string, entity Downloads
 	return app.createDirectory(baseDir)
 }
 
+func (app *application) setupTrackDownloadsDirectory(baseDir string, track *beatport.Track) (string, error) {
+	if app.config.SortByContext {
+		genre := beatport.SanitizePath(track.Genre.Name, app.config.WhitespaceCharacter)
+		baseDir = filepath.Join(baseDir, genre)
+	}
+	return app.createDirectory(baseDir)
+}
+
 // setupDownloadsDirectoryWithFirstTrackGenre sets up the downloads directory using the first track's genre
 func (app *application) setupDownloadsDirectoryWithFirstTrackGenre(baseDir string, entity DownloadsDirectoryEntity, provider FirstTrackGenreProvider, inst *beatport.Beatport, entityID int64) (string, error) {
 	if app.config.SortByContext {
@@ -846,7 +854,7 @@ func (app *application) handleTrackLink(inst *beatport.Beatport, link *beatport.
 	}
 	track.Release = *release
 
-	downloadsDir, err := app.setupDownloadsDirectory(app.config.DownloadsDirectory, release)
+	downloadsDir, err := app.setupTrackDownloadsDirectory(app.config.DownloadsDirectory, track)
 	if err != nil {
 		app.errorLogWrapper(link.Original, "setup downloads directory", err)
 		return

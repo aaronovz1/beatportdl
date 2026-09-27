@@ -2,9 +2,11 @@ package beatport
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,8 +14,10 @@ import (
 )
 
 const (
-	beatportBaseUrl   = "https://api.beatport.com/v4"
-	beatsourceBaseUrl = "https://api.beatsource.com/v4"
+	beatportBaseUrl       = "https://api.beatport.com/v4"
+	beatsourceBaseUrl     = "https://api.beatsource.com/v4"
+	maxGetRequestAttempts = 3
+	getRetryBaseDelay     = 250 * time.Millisecond
 )
 
 type Beatport struct {
@@ -186,7 +190,7 @@ func (b *Beatport) fetch(method, endpoint string, payload interface{}, contentTy
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", b.auth.tokenPair.AccessToken))
 	}
 
-	resp, err := b.client.Do(req)
+	resp, err := b.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -220,6 +224,40 @@ func (b *Beatport) fetch(method, endpoint string, payload interface{}, contentTy
 	}
 
 	return resp, nil
+}
+
+func (b *Beatport) doRequest(req *http.Request) (*http.Response, error) {
+	for attempt := 1; ; attempt++ {
+		attemptReq := req
+		if attempt > 1 {
+			attemptReq = req.Clone(req.Context())
+			if req.GetBody != nil {
+				body, err := req.GetBody()
+				if err != nil {
+					return nil, err
+				}
+				attemptReq.Body = body
+			}
+		}
+
+		resp, err := b.client.Do(attemptReq)
+		if err == nil {
+			return resp, nil
+		}
+		if req.Method != http.MethodGet || attempt >= maxGetRequestAttempts || req.Context().Err() != nil || !isRetryableRequestError(err) {
+			return nil, err
+		}
+
+		time.Sleep(time.Duration(attempt) * getRetryBaseDelay)
+	}
+}
+
+func isRetryableRequestError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func encodeFormPayload(payload interface{}) (url.Values, error) {
