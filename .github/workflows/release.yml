@@ -175,7 +175,9 @@ jobs:
       - name: Generate checksums
         run: |
           mkdir -p dist
-          find dist -type f -maxdepth 2 -print | sort | xargs sha256sum > dist/SHA256SUMS
+          for artifact in dist/*/*; do
+            (cd "$(dirname "$artifact")" && sha256sum "$(basename "$artifact")")
+          done > dist/SHA256SUMS
 
       - name: Publish release assets
         env:

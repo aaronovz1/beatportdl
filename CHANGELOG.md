@@ -17,6 +17,7 @@ This release adds command-line configuration overrides and adopts targeted upstr
 
 - Adopt upstream PR #126's HLS cleanup fix: close each segment response body before requesting the next segment instead of deferring closure until the full track finishes.
 - Reject zero or negative worker counts during config validation to prevent stalled downloads or invalid worker pools.
+- Publish portable checksum manifests with download filenames, excluding the manifest's own checksum.
 
 ### Changed
 
