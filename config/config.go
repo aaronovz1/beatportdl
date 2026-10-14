@@ -73,11 +73,12 @@ func FFMPEGInstalled() bool {
 	return err == nil
 }
 
-func Parse(filePath string) (*AppConfig, error) {
+func Parse(filePath string, overrides ...func(*AppConfig)) (*AppConfig, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
 	}
+	defer file.Close()
 	config := AppConfig{
 		Quality:                   "lossless",
 		CoverSize:                 DefaultCoverSize,
@@ -100,6 +101,9 @@ func Parse(filePath string) (*AppConfig, error) {
 	decoder := yaml.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
 		return nil, fmt.Errorf("failed to decode config file: %w", err)
+	}
+	for _, override := range overrides {
+		override(&config)
 	}
 
 	if config.Username == "" || config.Password == "" {
@@ -140,6 +144,9 @@ func Parse(filePath string) (*AppConfig, error) {
 
 	if config.TrackNumberPadding > 10 || config.TrackNumberPadding < 0 {
 		return nil, fmt.Errorf("invalid track number padding")
+	}
+	if config.MaxGlobalWorkers <= 0 || config.MaxDownloadWorkers <= 0 {
+		return nil, fmt.Errorf("worker counts must be positive")
 	}
 
 	return &config, nil

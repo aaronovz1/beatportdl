@@ -31,14 +31,16 @@ func (d *Duration) Display() string {
 	return fmt.Sprintf("%02d-%02d", minutes, remainingSeconds)
 }
 
+var templatePlaceholderRegexp = regexp.MustCompile(`\{(\w+)}`)
+var sanitizedStringReplacer = strings.NewReplacer(
+	"\\n", "",
+	"\\r", "",
+	"\\t", "",
+)
+
 func (s *SanitizedString) UnmarshalJSON(data []byte) error {
 	rawValue := string(bytes.Trim(data, `"`))
-	r := strings.NewReplacer(
-		"\\n", "",
-		"\\r", "",
-		"\\t", "",
-	)
-	sanitized := r.Replace(rawValue)
+	sanitized := sanitizedStringReplacer.Replace(rawValue)
 	*s = SanitizedString(strings.Join(strings.Fields(sanitized), " "))
 	return nil
 }
@@ -149,8 +151,7 @@ func NumberWithPadding(value, total, padding int) string {
 }
 
 func ParseTemplate(template string, values map[string]string) string {
-	re := regexp.MustCompile(`\{(\w+)}`)
-	result := re.ReplaceAllStringFunc(template, func(placeholder string) string {
+	result := templatePlaceholderRegexp.ReplaceAllStringFunc(template, func(placeholder string) string {
 		key := strings.Trim(placeholder, "{}")
 		if value, found := values[key]; found {
 			return value

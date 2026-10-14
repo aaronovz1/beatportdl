@@ -12,7 +12,7 @@ import (
 	"unspok3n/beatportdl/internal/beatport"
 )
 
-func Setup() (cfg *config.AppConfig, cachePath string, err error) {
+func Setup(overrides ...func(*config.AppConfig)) (cfg *config.AppConfig, cachePath string, err error) {
 	configFilePath, exists, err := FindConfigFile()
 	if err != nil {
 		return nil, "", err
@@ -59,7 +59,7 @@ func Setup() (cfg *config.AppConfig, cachePath string, err error) {
 		}
 	}
 
-	parsedConfig, err := config.Parse(configFilePath)
+	parsedConfig, err := config.Parse(configFilePath, overrides...)
 	if err != nil {
 		return nil, configFilePath, fmt.Errorf("load config: %w", err)
 	}

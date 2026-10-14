@@ -186,6 +186,28 @@ By default, search returns the results from beatport, if you want to search on b
 
 URL types that are currently supported: **Tracks, Releases, Playlists, Charts, Labels, Artists**
 
+### Command-Line Overrides
+
+Every config option can be overridden for one run. Use the config option name with underscores replaced by hyphens: `downloads_directory` becomes `--downloads-directory`. Values are applied after loading the config file and before validation or login. Omitted flags keep their configured values; overrides do not modify the config file.
+
+Put flags before URL or text-file arguments. Quote paths and templates containing spaces:
+
+```shell
+./beatportdl -q --downloads-directory "/Music/Moved Playlist" --sort-by-context=false --track-exists=skip https://www.beatport.com/library/playlists/123456
+./beatportdl --quality=high --max-download-workers=4 --track-number-padding=0 tracks.txt
+./beatportdl --playlist-directory-template="{first_genre}/{name}" --keep-cover tracks.txt
+```
+
+Boolean flags without a value enable the option. Use `--fix-tags=false` to disable it; the `=false` syntax is required. Zero integers and empty strings are explicit overrides, such as `--track-number-padding=0` or `--whitespace-character=`. Worker counts must be positive. Repeated flags use the last value.
+
+`--tag-mappings` takes a quoted YAML or JSON map and replaces the configured map. Formats omitted from the replacement receive the usual default mappings:
+
+```shell
+./beatportdl --tag-mappings='{"m4a":{"track_bpm":"BPM_raw","track_name":"TITLE"}}' tracks.txt
+```
+
+Use `--help` to list flags without loading the config file or logging in. `-q` exits after downloads finish. Prefer keeping passwords in the config file because command-line passwords can appear in shell history and process listings. First-run config creation still uses the setup prompts.
+
 ## Development
 
 Containerized CI checks with pinned builder inputs:

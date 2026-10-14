@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## v1.1.0 - 2026-10-14
+
+This release adds command-line configuration overrides and adopts targeted upstream improvements to HLS downloads and allocation efficiency.
+
+### Added
+
+- Override config values for a single run using command-line flags, including download destinations, quality, templates, booleans, concurrency, and tag mappings. Overrides are validated before login and leave the config file unchanged.
+- Preserve configured values for omitted flags, accept explicit false, zero, and empty-string overrides, and use the last value when a flag is repeated.
+- Show `--help` before configuration setup or authentication, and report malformed flags before starting setup.
+- Add regression coverage for config precedence, validation, tag mappings, CLI startup, and HLS response cleanup, plus allocation benchmarks.
+
+### Fixed
+
+- Adopt upstream PR #126's HLS cleanup fix: close each segment response body before requesting the next segment instead of deferring closure until the full track finishes.
+- Reject zero or negative worker counts during config validation to prevent stalled downloads or invalid worker pools.
+
+### Changed
+
+- Selectively port upstream PR #126's allocation optimizations by reusing the compiled template regexp and JSON whitespace cleanup replacer, while preserving this fork's path sanitization and directory handling.
+- Document the local macOS arm64 test-build installation workflow for future contributions.
+
+### Command-Line Usage
+
+Use config option names with underscores replaced by hyphens. Put flags before URLs or text files:
+
+```shell
+./beatportdl -q --downloads-directory "/Music/Playlist" --sort-by-context=false --track-exists=skip tracks.txt
+./beatportdl --quality=high --max-download-workers=4 --track-number-padding=0 tracks.txt
+```
+
+Use `=false` to disable a boolean option. `--tag-mappings` accepts a quoted YAML or JSON map and replaces the configured map. Run `./beatportdl --help` for all options. First-run configuration creation still uses setup prompts.
+
 ## v1.0.13 - 2026-09-27
 
 This hotfix release improves download reliability and standalone track organization.

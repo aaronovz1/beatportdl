@@ -117,24 +117,26 @@ func (app *application) downloadSegments(path string, segmentUrls []string, key 
 	}
 
 	for _, segmentUrl := range segmentUrls {
-		req, err := http.Get(segmentUrl)
-		if err != nil {
-			return "", err
-		}
-		defer req.Body.Close()
-		if req.StatusCode != http.StatusOK {
-			return "", errors.New(req.Status)
-		}
-		segBytes, err := io.ReadAll(req.Body)
-		if err != nil {
-			return "", err
-		}
-		decSegBytes, err := decryptSegment(segBytes, key)
-		if err != nil {
-			return "", err
-		}
-		_, err = file.Write(decSegBytes)
-		if err != nil {
+		if err := func() error {
+			resp, err := http.Get(segmentUrl)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return errors.New(resp.Status)
+			}
+			segBytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return err
+			}
+			decSegBytes, err := decryptSegment(segBytes, key)
+			if err != nil {
+				return err
+			}
+			_, err = file.Write(decSegBytes)
+			return err
+		}(); err != nil {
 			return "", err
 		}
 		if bar != nil {

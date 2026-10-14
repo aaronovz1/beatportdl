@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/fatih/color"
@@ -45,10 +46,18 @@ type application struct {
 }
 
 func main() {
-	cfg, cachePath, err := Setup()
+	opts, err := config.ParseCommandLine(os.Args[1:], os.Stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		os.Exit(2)
+	}
+	cfg, cachePath, err := Setup(opts.Apply)
 	if err != nil {
 		fmt.Println(err.Error())
 		Pause()
+		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,12 +113,7 @@ func main() {
 	app.bp = bp
 	app.bs = bs
 
-	quitFlag := flag.Bool("q", false, "Quit the main loop after finishing")
-
-	flag.Parse()
-	inputArgs := flag.Args()
-
-	for _, arg := range inputArgs {
+	for _, arg := range opts.Args {
 		if strings.HasSuffix(arg, ".txt") {
 			app.parseTextFile(arg)
 		} else {
@@ -135,7 +139,7 @@ func main() {
 		app.wg.Wait()
 		app.pbp.Shutdown()
 
-		if *quitFlag || ctx.Err() != nil {
+		if opts.Quit || ctx.Err() != nil {
 			break
 		}
 
