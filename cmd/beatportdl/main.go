@@ -35,6 +35,10 @@ type application struct {
 	pbp         *mpb.Progress
 	mediaClient *http.Client
 
+	directoryCleanupMutex sync.Mutex
+	activeURLWorkers      int
+	pendingDirectories    map[string]struct{}
+
 	urls                  []string
 	activeFiles           map[string]int64
 	activeFilesMutex      sync.RWMutex

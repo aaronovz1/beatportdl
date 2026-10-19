@@ -187,6 +187,8 @@ An `invalid API response` error means a catalog response was incomplete or malfo
 
 Playlist/chart updates share release metadata within each collection. With `track_exists: skip`, identity-matched files avoid extra metadata lookups, but BeatportDL still checks access and the server-selected audio format for each track. Worker limits apply before new goroutines are started, keeping queued work bounded on large collections.
 
+Empty output directories are cleaned only after all active URL workers finish, so concurrent downloads can safely share a folder. Completed files, nonempty directories and the configured download root are preserved; temporary audio and cover files are still cleaned by their individual downloads.
+
 Run BeatportDL and enter a Beatport URL or search query:
 
 ```shell

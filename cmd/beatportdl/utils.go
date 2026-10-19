@@ -30,11 +30,13 @@ func (app *application) globalWorker(fn func()) {
 	if !app.semAcquire(app.globalSem) {
 		return
 	}
+	app.beginURLWorker()
 	app.wg.Add(1)
 
 	go func() {
 		defer app.wg.Done()
 		defer app.semRelease(app.globalSem)
+		defer app.endURLWorker()
 		defer func() {
 			if err := recover(); err != nil {
 				app.logWorkerPanic("global worker", err)

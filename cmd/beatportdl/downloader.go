@@ -819,12 +819,6 @@ func (app *application) handleTrackMedia(track *beatport.Track, downloadsDir str
 	return true, nil
 }
 
-func (app *application) cleanup(downloadsDir string) {
-	if downloadsDir != app.config.DownloadsDirectory {
-		os.Remove(downloadsDir)
-	}
-}
-
 func forPaginatedWorkers[T any](
 	workers *sync.WaitGroup,
 	entityId int64,

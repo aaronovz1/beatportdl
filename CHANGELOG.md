@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Defer empty-directory cleanup until all active URL workers finish, preventing a failed or completed URL from removing a folder another download still needs. Serialize final cleanup with new URL admission, drain it after cancellation/panic too, and remove requested empty children before parents. Preserve the configured download root (including path aliases), nonempty directories, regular files and symlinks. Temporary audio/cover cleanup remains immediate.
 - Reject malformed HTTP-success catalog metadata and collection pages instead of treating them as valid resources or empty results. Require positive resource IDs and explicit results arrays, validate collection item identities and pagination values, and reject trailing JSON. Preserve valid empty pages, optional/unknown metadata, HTTP errors and response-body cleanup.
 - Reject negative search-result selections instead of panicking, while preserving valid track/release selections and their requested order.
 - Return validation errors for incomplete library and localized catalog URLs instead of indexing missing URL components.
@@ -24,6 +25,7 @@
 
 ### Added
 
+- Synchronized regressions for concurrent track URLs sharing a genre folder, cleanup after success/panic/cancellation, cancelled admission and fresh runs, nested empty directories, root aliases, completed files and symlinks.
 - Request-count regressions and a no-op playlist benchmark, plus coverage for shared release metadata across pages, fresh-run retries, server-selected formats, denied access, HLS skipping, filename fallbacks, release/genre directory layouts, metadata-failure cleanup and independent chart covers. Add 10,000-job scheduling regressions for bounded goroutines, cancellation, worker joins and panic recovery.
 - Catalog response regressions for missing/null/invalid metadata, malformed pages and playlist items, valid empty pages, pagination/result preservation, HTTP errors, read failures and response-body closure across all catalog metadata getters.
 - Regression tests for invalid search selections, incomplete and supported URL routes, safe/unsafe whitespace replacements and overrides, JSON string decoding, and legacy-filename identity matching for FLAC/M4A.
