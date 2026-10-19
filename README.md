@@ -255,6 +255,14 @@ That builds:
 - `beatportdl-linux-amd64`
 - `beatportdl-linux-arm64`
 
+To cross-build Windows `amd64` locally without MSYS2 or host libraries:
+
+```shell
+./scripts/docker-build.sh windows-amd64
+```
+
+This produces `bin/beatportdl-windows-amd64.exe`. Containerized dependency builds use Zig's archive tools as well as its compilers, so foreign-target library indexes do not depend on the host's binutils.
+
 The builder image pins Zig, zlib, and TagLib inputs and verifies the Zig and zlib source checksums during image creation. TagLib is pinned to an exact signed release commit. The container does not fetch dependencies at runtime.
 
 GitHub Actions is now configured to validate release builds on every push and pull request with this split:
@@ -263,6 +271,8 @@ GitHub Actions is now configured to validate release builds on every push and pu
 - macOS `amd64` artifacts come from a native `macos-15-intel` runner.
 - macOS `arm64` artifacts come from a native `macos-15` runner.
 - Windows `amd64` artifacts come from a native `windows-2022` runner with MSYS2 MinGW.
+
+CI also cross-builds Windows with Docker and checks its DLL imports to guard the local build path. Official Windows releases still use the native Windows runner.
 
 Tagged releases are published automatically by `.github/workflows/release.yml`, which packages the binaries and uploads a `SHA256SUMS` manifest with the release assets once the runner jobs pass.
 

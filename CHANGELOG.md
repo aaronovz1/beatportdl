@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fix Dockerized Windows cross-builds by using Zig's target-aware archive tools for TagLib and zlib. Host archive tools could omit the Windows symbol indexes and cause unresolved TagLib symbols at link time. Add a Windows Docker build and runtime-DLL check to CI.
 - Preserve existing audio files when an overwrite download or HLS remux fails. Only completed transfers replace the destination.
 - Close and remove partial HLS staging files after failures instead of leaving UUID-named files in download directories.
 - Reject malformed HLS encryption IVs, ciphertext lengths, and padding with errors instead of panics or truncated output.

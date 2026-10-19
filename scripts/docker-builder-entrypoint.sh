@@ -79,6 +79,8 @@ build_zlib() {
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DCMAKE_SYSTEM_NAME="$system_name" \
+    -DCMAKE_AR=/usr/local/bin/zig-ar.sh \
+    -DCMAKE_RANLIB=/usr/local/bin/zig-ranlib.sh \
     -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
     -DBUILD_SHARED_LIBS=OFF \
     -DZLIB_BUILD_SHARED=OFF \
@@ -106,6 +108,8 @@ build_taglib() {
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DCMAKE_SYSTEM_NAME="$system_name" \
+    -DCMAKE_AR=/usr/local/bin/zig-ar.sh \
+    -DCMAKE_RANLIB=/usr/local/bin/zig-ranlib.sh \
     -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
     -DCMAKE_PREFIX_PATH="$prefix" \
     -DZLIB_ROOT="$prefix" \

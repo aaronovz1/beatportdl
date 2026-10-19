@@ -84,7 +84,8 @@ RUN for attempt in 1 2 3; do \
   && rm -rf /opt/src/taglib/.git
 
 COPY scripts/docker-builder-entrypoint.sh /usr/local/bin/beatportdl-builder
-RUN chmod +x /usr/local/bin/beatportdl-builder
+COPY scripts/zig-ar.sh scripts/zig-ranlib.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/beatportdl-builder /usr/local/bin/zig-ar.sh /usr/local/bin/zig-ranlib.sh
 
 WORKDIR /workspace
 

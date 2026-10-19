@@ -24,7 +24,7 @@ jobs:
         run: docker run --rm -v "$PWD:/workspace" beatportdl-builder:ci test
 
   dockerized-builds:
-    name: Dockerized Linux cross-builds
+    name: Dockerized cross-builds
     runs-on: ubuntu-latest
     needs: dockerized-tests
     steps:
@@ -36,6 +36,12 @@ jobs:
 
       - name: Build supported Linux release artifacts in container
         run: docker run --rm -v "$PWD:/workspace" beatportdl-builder:ci release-core
+
+      - name: Cross-build Windows artifact in container
+        run: docker run --rm -v "$PWD:/workspace" beatportdl-builder:ci windows-amd64
+
+      - name: Verify cross-built Windows runtime dependencies
+        run: ./scripts/check-windows-runtime-deps.sh bin/beatportdl-windows-amd64.exe
 
   macos-amd64-build:
     name: macOS amd64 native build
