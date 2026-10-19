@@ -71,3 +71,7 @@ func (b *Beatport) GetLabelReleases(id int64, page int, params string) (*Paginat
 	}
 	return &response, nil
 }
+
+func (b *Beatport) GetLabelTracks(id int64, page int, params string) (*Paginated[Track], error) {
+	return b.getCatalogTracks("label_id", id, page, params)
+}

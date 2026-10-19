@@ -69,7 +69,7 @@ func ParseCommandLine(args []string, output io.Writer) (*CommandLineOptions, err
 	stringFlag("downloads-directory", "Download destination", func(c *AppConfig, v string) { c.DownloadsDirectory = v })
 	boolFlag("sort-by-context", "Organize downloads by context", func(c *AppConfig, v bool) { c.SortByContext = v })
 	boolFlag("sort-by-label", "Use label names as parent release directories", func(c *AppConfig, v bool) { c.SortByLabel = v })
-	boolFlag("force-release-directories", "Create release directories within playlists and charts", func(c *AppConfig, v bool) { c.ForceReleaseDirectories = v })
+	boolFlag("force-release-directories", "Create release directories within playlists, charts, artists, and labels", func(c *AppConfig, v bool) { c.ForceReleaseDirectories = v })
 	stringFlag("track-exists", "Existing track behavior: error, skip, overwrite, update", func(c *AppConfig, v string) { c.TrackExists = v })
 	intFlag("track-number-padding", "Track number padding (0-10; 0 uses track count)", func(c *AppConfig, v int) { c.TrackNumberPadding = v })
 	stringFlag("release-directory-template", "Release directory template", func(c *AppConfig, v string) { c.ReleaseDirectoryTemplate = v })

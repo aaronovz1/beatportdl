@@ -114,6 +114,7 @@ func (app *application) setupDownloadsDirectory(baseDir string, entity Downloads
 				},
 			)
 		case *beatport.Label:
+			baseDir = filepath.Join(baseDir, "Labels")
 			subDir = castedEntity.DirectoryName(
 				beatport.NamingPreferences{
 					Template:   app.config.LabelDirectoryTemplate,
@@ -121,6 +122,7 @@ func (app *application) setupDownloadsDirectory(baseDir string, entity Downloads
 				},
 			)
 		case *beatport.Artist:
+			baseDir = filepath.Join(baseDir, "Artists")
 			subDir = castedEntity.DirectoryName(
 				beatport.NamingPreferences{
 					Template:   app.config.ArtistDirectoryTemplate,
@@ -1108,63 +1110,11 @@ func (app *application) handleLabelLink(inst *beatport.Beatport, link *beatport.
 		return
 	}
 
-	err = ForPaginated[beatport.Release](link.ID, link.Params, inst.GetLabelReleases, func(release beatport.Release, i int) error {
-		app.globalWorker(func() {
-			releaseStoreUrl := release.StoreUrl()
-			releaseDir, err := app.setupDownloadsDirectory(downloadsDir, &release)
-			if err != nil {
-				app.errorLogWrapper(releaseStoreUrl, "setup release downloads directory", err)
-				return
-			}
-
-			cover := newTrackCover(app, release.Image, releaseDir, app.requireCover(true, true))
-			defer cover.CleanupTemp()
-
-			wg := sync.WaitGroup{}
-			var processedReleaseTrack atomic.Bool
-			err = ForPaginated[beatport.Track](release.ID, "", inst.GetReleaseTracks, func(track beatport.Track, i int) error {
-				app.downloadWorker(&wg, func() {
-					trackStoreUrl := track.StoreUrl()
-					t, err := inst.GetTrack(track.ID)
-					if err != nil {
-						app.errorLogWrapper(trackStoreUrl, "fetch full track", err)
-						return
-					}
-					t.Release = release
-
-					processed, err := app.handleTrack(inst, t, releaseDir, cover)
-					if err != nil {
-						app.errorLogWrapper(trackStoreUrl, "handle track", err)
-						return
-					}
-					if processed {
-						processedReleaseTrack.Store(true)
-					}
-				})
-				return nil
-			})
-			if err != nil {
-				app.errorLogWrapper(releaseStoreUrl, "handle release tracks", err)
-				app.cleanup(releaseDir)
-				return
-			}
-			wg.Wait()
-
-			if processedReleaseTrack.Load() {
-				if err := cover.Handle(); err != nil {
-					app.errorLogWrapper(releaseStoreUrl, "handle cover file", err)
-					return
-				}
-			}
-
-			app.cleanup(releaseDir)
-		})
-		return nil
+	err = app.handleCatalogTracks(inst, link, downloadsDir, catalogTrackSource{
+		fetchPage: inst.GetLabelTracks, fetchTrack: inst.GetTrack, fetchRelease: inst.GetRelease,
 	})
-
 	if err != nil {
-		app.errorLogWrapper(link.Original, "handle label releases", err)
-		return
+		app.errorLogWrapper(link.Original, "handle label tracks", err)
 	}
 }
 
@@ -1181,54 +1131,10 @@ func (app *application) handleArtistLink(inst *beatport.Beatport, link *beatport
 		return
 	}
 
-	wg := sync.WaitGroup{}
-	err = ForPaginated[beatport.Track](link.ID, link.Params, inst.GetArtistTracks, func(track beatport.Track, i int) error {
-		app.downloadWorker(&wg, func() {
-			trackStoreUrl := track.StoreUrl()
-			t, err := inst.GetTrack(track.ID)
-			if err != nil {
-				app.errorLogWrapper(trackStoreUrl, "fetch full track", err)
-				return
-			}
-
-			release, err := inst.GetRelease(track.Release.ID)
-			if err != nil {
-				app.errorLogWrapper(trackStoreUrl, "fetch track release", err)
-				return
-			}
-			t.Release = *release
-
-			releaseDir, err := app.setupDownloadsDirectory(downloadsDir, release)
-			if err != nil {
-				app.errorLogWrapper(trackStoreUrl, "setup track release downloads directory", err)
-				return
-			}
-
-			cover := newTrackCover(app, release.Image, releaseDir, app.requireCover(true, true))
-			defer cover.CleanupTemp()
-
-			processed, err := app.handleTrack(inst, t, releaseDir, cover)
-			if err != nil {
-				app.errorLogWrapper(trackStoreUrl, "handle track", err)
-				app.cleanup(releaseDir)
-				return
-			}
-
-			if processed {
-				if err := cover.Handle(); err != nil {
-					app.errorLogWrapper(trackStoreUrl, "handle cover file", err)
-					return
-				}
-			}
-
-			app.cleanup(releaseDir)
-		})
-		return nil
+	err = app.handleCatalogTracks(inst, link, downloadsDir, catalogTrackSource{
+		fetchPage: inst.GetArtistTracks, fetchTrack: inst.GetTrack, fetchRelease: inst.GetRelease,
 	})
 	if err != nil {
 		app.errorLogWrapper(link.Original, "handle artist tracks", err)
-		return
 	}
-
-	wg.Wait()
 }

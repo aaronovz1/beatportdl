@@ -17,6 +17,42 @@ func newTestApplication(trackExists string) *application {
 	}
 }
 
+func TestArtistAndLabelGroupsPreserveDirectoryTemplates(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		entity DownloadsDirectoryEntity
+		group  string
+	}{
+		{"artist", &beatport.Artist{Name: "Example Artist"}, "Artists"},
+		{"label", &beatport.Label{Name: "Example Label"}, "Labels"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestApplication("skip")
+			app.config.SortByContext = true
+			app.config.ArtistDirectoryTemplate = "Archive/{name}"
+			app.config.LabelDirectoryTemplate = "Archive/{name}"
+			base := t.TempDir()
+			got, err := app.setupDownloadsDirectory(base, tc.entity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := "Example Artist"
+			if tc.group == "Labels" {
+				name = "Example Label"
+			}
+			want := filepath.Join(base, tc.group, "Archive", name)
+			if got != want {
+				t.Fatalf("directory = %q, want %q", got, want)
+			}
+			app.config.SortByContext = false
+			got, err = app.setupDownloadsDirectory(base, tc.entity)
+			if err != nil || got != base {
+				t.Fatalf("flat override directory = %q, error = %v; want %q", got, err, base)
+			}
+		})
+	}
+}
+
 func TestSetupTrackDownloadsDirectoryUsesTrackGenre(t *testing.T) {
 	baseDir := t.TempDir()
 	app := newTestApplication("update")

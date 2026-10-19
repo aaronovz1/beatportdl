@@ -14,6 +14,14 @@ BeatportDL works only with active Beatport or Beatsource streaming subscriptions
 
 For bugs and feature requests, please use the issue templates in this fork and include your OS, BeatportDL version, store, subscription tier, configured quality, URL type, and sanitized logs. Remove usernames, passwords, tokens, cookies, and local private paths before posting logs.
 
+## Label and Artist Filters
+
+Label and artist URLs use the catalog tracks endpoint. Query filters such as `genre_name`, `publish_date`, and `order_by` are forwarded on every page. Label downloads include only matching tracks, not unrelated tracks from the same release. Genre names must be the full exact name (case-insensitive), for example `?genre_name=bass+house`.
+
+With `sort_by_context` enabled, artist downloads use `Artists/<artist_directory_template>/` and label downloads use `Labels/<label_directory_template>/` beneath `downloads_directory`. Both put tracks directly in their context directory by default; enable `force_release_directories` to add release subdirectories. Separate `cover.jpg` files are kept only with release subdirectories for these downloads, avoiding conflicting release covers in one artist or label folder. Embedded cover tagging is unchanged.
+
+Existing-file checks still use the target directory and embedded track identity; this change does not search other download directories or move existing files. Move existing artist/label context folders beneath their new `Artists`/`Labels` groups before rerunning. If they contain release subdirectories, keep `force_release_directories` enabled or move the audio files into the context directory to avoid downloading them again. Set `sort_by_context: false` (or `--sort-by-context=false`) to download directly into `downloads_directory` without groups or release subdirectories.
+
 ## Setup
 
 1. [Download](https://github.com/aaronovz1/beatportdl/releases/) or [build](#building) BeatportDL.
@@ -50,7 +58,7 @@ This will create a new `beatportdl-config.yml` file. You can put the following o
 | `downloads_directory`         |                                           | String     | Location for the downloads directory                                                                                                                                                      |
 | `sort_by_context`             | false                                     | Boolean    | Create a directory for each release, playlist, chart, label, or artist                                                                                                                    |
 | `sort_by_label`               | false                                     | Boolean    | Use label names as parent directories for releases (requires `sort_by_context`)                                                                                                           |
-| `force_release_directories`   | false                                     | Boolean    | Create release directories inside chart and playlist folders (requires `sort_by_context`)                                                                                                 |
+| `force_release_directories`   | false                                     | Boolean    | Create release directories inside chart, playlist, artist, and label folders (requires `sort_by_context`)                                                                                  |
 | `track_exists`                | update                                    | String     | Behavior when track file already exists                                                                                                                                                   |
 | `track_number_padding`        | 2                                         | Integer    | Track number padding for filenames and tag mappings (when using `track_number_with_padding` or `release_track_count_with_padding`)<br/> Set to 0 for dynamic padding based on track count |
 | `cover_size`                  | 1400x1400                                 | String     | Cover art size for `keep_cover` and track metadata (if `fix_tags` is enabled) _[max: 1400x1400]_                                                                                          |

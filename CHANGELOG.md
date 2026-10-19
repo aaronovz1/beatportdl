@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## v1.1.1 - 2026-10-19
+
+This release improves label and artist filtering and download organization, while preserving existing-file detection and cover cleanup.
+
+### Changed
+
+- Adopt upstream's general track endpoint for label and artist downloads. Label filters now select individual matching tracks instead of downloading every track on a matching release.
+- Share release metadata and lazy covers across catalog tracks while preserving metadata-based duplicate detection, filename collision handling, and UUID cover cleanup. Wait for active workers before cleanup even when pagination fails.
+- Group context-sorted artist and label downloads beneath top-level `Artists` and `Labels` directories, preserving their configured directory templates. Both put tracks directly in their context directory by default; release subdirectories are opt-in through `force_release_directories`. Keep embedded covers, but avoid conflicting `cover.jpg` files in flat artist/label folders. Existing files are not moved automatically.
+- Preserve the selected label/artist and pagination when forwarding URL filters, reject malformed query parameters, and retain the selected store on returned tracks.
+
+### Added
+
+- Regression tests for scoped catalog requests, filter forwarding, pagination, grouped directory templates, flat destination overrides, shared covers, embedded cover tagging, ISRC-based skipping after metadata changes, filename collisions, and error-path cleanup.
+
+### Existing Downloads
+
+With `sort_by_context: true`, the default layout is now:
+
+```text
+<downloads>/Artists/<artist directory template>/track files
+<downloads>/Labels/<label directory template>/track files
+```
+
+Existing files are not migrated or searched recursively. Move existing artist/label context folders beneath the new `Artists`/`Labels` groups before rerunning. If they contain release subdirectories, enable `force_release_directories: true` to retain that layout, or move the audio files into their context directory. Otherwise, tracks in the old location may be downloaded again.
+
+Set `sort_by_context: false` (or `--sort-by-context=false`) to download directly into `downloads_directory` without groups or release subdirectories. Other URL types keep their existing layout.
+
 ## v1.1.0 - 2026-10-14
 
 This release adds command-line configuration overrides and adopts targeted upstream improvements to HLS downloads and allocation efficiency.
