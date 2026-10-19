@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"github.com/grafov/m3u8"
 	"github.com/vbauerster/mpb/v8"
 	"io"
@@ -93,20 +92,43 @@ func decryptSegment(segment []byte, key StreamKey) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(key.IV) != block.BlockSize() {
+		return nil, fmt.Errorf("invalid stream IV length: got %d bytes, want %d", len(key.IV), block.BlockSize())
+	}
+	if len(segment) == 0 || len(segment)%block.BlockSize() != 0 {
+		return nil, fmt.Errorf("invalid encrypted segment length: %d bytes", len(segment))
+	}
 	cbc := cipher.NewCBCDecrypter(block, key.IV)
 	decrypted := make([]byte, len(segment))
 	cbc.CryptBlocks(decrypted, segment)
-	padding := decrypted[len(decrypted)-1]
-	return decrypted[:len(decrypted)-int(padding)], nil
+	padding := int(decrypted[len(decrypted)-1])
+	if padding == 0 || padding > block.BlockSize() {
+		return nil, errors.New("invalid encrypted segment padding")
+	}
+	for _, value := range decrypted[len(decrypted)-padding:] {
+		if int(value) != padding {
+			return nil, errors.New("invalid encrypted segment padding")
+		}
+	}
+	return decrypted[:len(decrypted)-padding], nil
 }
 
-func (app *application) downloadSegments(path string, segmentUrls []string, key StreamKey, pbPrefix string) (string, error) {
-	tempFileName := uuid.New().String()
-	path = filepath.Join(path, tempFileName)
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0755)
+func (app *application) downloadSegments(directory string, segmentUrls []string, key StreamKey, pbPrefix string) (string, error) {
+	if len(segmentUrls) == 0 {
+		return "", errors.New("stream has no segments")
+	}
+	file, err := os.CreateTemp(directory, ".beatportdl-segments-*.ts")
 	if err != nil {
 		return "", err
 	}
+	tempPath := file.Name()
+	keepTemp := false
+	defer func() {
+		_ = file.Close()
+		if !keepTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
 
 	var bar *mpb.Bar
 	var start time.Time
@@ -116,6 +138,7 @@ func (app *application) downloadSegments(path string, segmentUrls []string, key 
 		bar = app.pbp.AddBar(int64(total), ProgressBarOptions(pbPrefix)...)
 	}
 
+	var written int64
 	for _, segmentUrl := range segmentUrls {
 		if err := func() error {
 			resp, err := http.Get(segmentUrl)
@@ -134,7 +157,8 @@ func (app *application) downloadSegments(path string, segmentUrls []string, key 
 			if err != nil {
 				return err
 			}
-			_, err = file.Write(decSegBytes)
+			n, err := file.Write(decSegBytes)
+			written += int64(n)
 			return err
 		}(); err != nil {
 			return "", err
@@ -143,15 +167,19 @@ func (app *application) downloadSegments(path string, segmentUrls []string, key 
 			bar.EwmaIncrInt64(1, time.Since(start))
 		}
 	}
+	if written == 0 {
+		return "", errors.New("downloaded stream is empty")
+	}
 	err = file.Close()
 	if err != nil {
 		return "", err
 	}
-	return path, nil
+	keepTemp = true
+	return tempPath, nil
 }
 
 func remuxToM4A(input, output string) error {
-	tempFile, err := os.CreateTemp(filepath.Dir(output), "."+filepath.Base(output)+".*.m4a")
+	tempFile, err := os.CreateTemp(filepath.Dir(output), ".beatportdl-remux-*.m4a")
 	if err != nil {
 		return fmt.Errorf("create temp output: %w", err)
 	}
@@ -177,6 +205,13 @@ func remuxToM4A(input, output string) error {
 	)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("ffmpeg: %w", err)
+	}
+	info, err := os.Stat(tempOutput)
+	if err != nil {
+		return fmt.Errorf("stat remuxed m4a: %w", err)
+	}
+	if info.Size() == 0 {
+		return errors.New("remuxed m4a is empty")
 	}
 	if err := validateM4A(tempOutput); err != nil {
 		return fmt.Errorf("validate remuxed m4a: %w", err)

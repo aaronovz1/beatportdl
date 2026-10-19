@@ -54,12 +54,13 @@ func catalogTestSource(tracks []beatport.Track, release beatport.Release) catalo
 
 func TestCatalogTracksOnlyDownloadsFilteredResults(t *testing.T) {
 	app := newCatalogTestApplication(t)
+	audio := audioFixture(t, "tone.flac")
 	var coverRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/cover" {
 			coverRequests.Add(1)
 		}
-		_, _ = w.Write([]byte("fixture"))
+		_, _ = w.Write(audio)
 	}))
 	defer server.Close()
 	release := beatport.Release{ID: 9, Name: "Mixed Genres", TrackCount: 3, Image: beatport.Image{DynamicURI: server.URL + "/cover"}}
@@ -130,8 +131,13 @@ func TestCatalogTracksSkippedIdentityDoesNotDownloadCover(t *testing.T) {
 func TestCatalogTracksPreservesDistinctFilenameCollisions(t *testing.T) {
 	app := newCatalogTestApplication(t)
 	app.config.KeepCover = false
+	firstAudio, secondAudio := audioFixture(t, "tone.flac"), audioFixture(t, "other-tone.flac")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(r.URL.Path))
+		if r.URL.Path == "/101" {
+			_, _ = w.Write(firstAudio)
+		} else {
+			_, _ = w.Write(secondAudio)
+		}
 	}))
 	defer server.Close()
 	release := beatport.Release{ID: 9, Name: "Release"}
@@ -153,7 +159,8 @@ func TestCatalogTracksPreservesDistinctFilenameCollisions(t *testing.T) {
 
 func TestCatalogTracksPaginationErrorWaitsBeforeCoverCleanup(t *testing.T) {
 	app := newCatalogTestApplication(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("fixture")) }))
+	audio := audioFixture(t, "tone.flac")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(audio) }))
 	defer server.Close()
 	release := beatport.Release{ID: 9, Name: "Release", Image: beatport.Image{DynamicURI: server.URL + "/cover"}}
 	tracks := []beatport.Track{{ID: 101, Name: "One", Release: release}}
@@ -203,14 +210,19 @@ func TestCatalogTracksPaginationErrorWaitsBeforeCoverCleanup(t *testing.T) {
 
 func TestCatalogTracksTagFailureCleansTemporaryCover(t *testing.T) {
 	app := newCatalogTestApplication(t)
+	audio := audioFixture(t, "tone.flac")
 	app.config.FixTags = true
 	app.config.CoverSize = "500x500"
 	var coverRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/cover" {
 			coverRequests.Add(1)
+			// Inject a tag-read failure after transfer validation, while the cover is fetched.
+			if err := os.WriteFile(filepath.Join(app.config.DownloadsDirectory, "Release", "One.flac"), []byte("invalid audio"), 0600); err != nil {
+				t.Error(err)
+			}
 		}
-		_, _ = w.Write([]byte("not a valid audio file"))
+		_, _ = w.Write(audio)
 	}))
 	defer server.Close()
 	release := beatport.Release{ID: 9, Name: "Release", Image: beatport.Image{DynamicURI: server.URL + "/cover"}}
@@ -260,6 +272,7 @@ func TestArtistAndLabelTracksDirectoryLayout(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newCatalogTestApplication(t)
+			audio := audioFixture(t, "tone.flac")
 			app.config.SortByContext = tc.sort
 			app.config.ForceReleaseDirectories = tc.force
 			app.config.ArtistDirectoryTemplate = "{name}"
@@ -288,7 +301,7 @@ func TestArtistAndLabelTracksDirectoryLayout(t *testing.T) {
 				if r.URL.Path == "/cover" {
 					covers.Add(1)
 				}
-				_, _ = w.Write([]byte("fixture"))
+				_, _ = w.Write(audio)
 			}))
 			defer server.Close()
 			first := beatport.Release{ID: 9, Name: "First Release", Image: beatport.Image{DynamicURI: server.URL + "/cover"}}

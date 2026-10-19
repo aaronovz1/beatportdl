@@ -581,7 +581,6 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 
 	if download != nil {
 		if err := app.downloadFile(download.Location, filePath, prefix); err != nil {
-			os.Remove(filePath)
 			return "", err
 		}
 	} else if stream != nil {
@@ -590,12 +589,11 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 			return "", fmt.Errorf("get stream segments: %v", err)
 		}
 		segmentsFile, err := app.downloadSegments(directory, *segments, *key, prefix)
-		defer os.Remove(segmentsFile)
 		if err != nil {
 			return "", fmt.Errorf("download segments: %v", err)
 		}
+		defer os.Remove(segmentsFile)
 		if err := remuxToM4A(segmentsFile, filePath); err != nil {
-			os.Remove(filePath)
 			return "", fmt.Errorf("remux to m4a: %v", err)
 		}
 	}

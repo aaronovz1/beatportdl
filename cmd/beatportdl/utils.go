@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unspok3n/beatportdl/internal/taglib"
 
 	"github.com/fatih/color"
 	"github.com/mattn/go-runewidth"
@@ -83,7 +84,12 @@ func (app *application) semRelease(s chan struct{}) {
 }
 
 func (app *application) downloadFile(url string, destination string, pbPrefix string) error {
-	out, err := os.CreateTemp(filepath.Dir(destination), "."+filepath.Base(destination)+".*.tmp")
+	extension := strings.ToLower(filepath.Ext(destination))
+	isAudio := extension == ".flac" || extension == ".m4a"
+	if !isAudio {
+		extension = ".tmp"
+	}
+	out, err := os.CreateTemp(filepath.Dir(destination), ".beatportdl-download-*"+extension)
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
@@ -131,13 +137,33 @@ func (app *application) downloadFile(url string, destination string, pbPrefix st
 	if resp.ContentLength >= 0 && written != resp.ContentLength {
 		return fmt.Errorf("download size mismatch: got %d bytes, want %d", written, resp.ContentLength)
 	}
+	if written == 0 {
+		return errors.New("download is empty")
+	}
 	if err := out.Close(); err != nil {
 		return fmt.Errorf("close file: %w", err)
+	}
+	if isAudio {
+		if err := validateAudioFile(tempPath); err != nil {
+			return fmt.Errorf("validate downloaded audio: %w", err)
+		}
 	}
 	if err := os.Rename(tempPath, destination); err != nil {
 		return fmt.Errorf("move file into place: %w", err)
 	}
 	keepTemp = true
+	return nil
+}
+
+func validateAudioFile(path string) error {
+	file, err := taglib.Read(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if file.SampleRate() <= 0 {
+		return errors.New("missing audio properties")
+	}
 	return nil
 }
 

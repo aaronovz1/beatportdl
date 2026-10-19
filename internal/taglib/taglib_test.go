@@ -2,10 +2,31 @@ package taglib
 
 import (
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestReadRejectsInvalidAudio(t *testing.T) {
+	for _, extension := range []string{".flac", ".m4a"} {
+		path := filepath.Join(t.TempDir(), "invalid"+extension)
+		if err := os.WriteFile(path, []byte("not audio"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		file, err := Read(path)
+		if file != nil || !errors.Is(err, ErrInvalid) {
+			t.Fatalf("Read() = %v, %v; want nil and ErrInvalid", file, err)
+		}
+	}
+}
+
+func TestSampleRateWithoutAudioProperties(t *testing.T) {
+	file := &File{}
+	if got := file.SampleRate(); got != 0 {
+		t.Fatalf("SampleRate() = %d, want 0", got)
+	}
+}
 
 func TestGetPropertyReturnsEmptyStringWhenPropertyIsMissing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "no-tags.wav")

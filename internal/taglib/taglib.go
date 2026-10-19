@@ -36,7 +36,11 @@ func Read(filename string) (*File, error) {
 	cs := C.CString(filename)
 	defer C.free(unsafe.Pointer(cs))
 	fp := C.taglib_file_new_wide(cs)
-	if fp == nil || C.taglib_file_is_valid(fp) == 0 {
+	if fp == nil {
+		return nil, ErrInvalid
+	}
+	if C.taglib_file_is_valid(fp) == 0 {
+		C.taglib_file_free(fp)
 		return nil, ErrInvalid
 	}
 	return &File{
@@ -118,6 +122,9 @@ func (f *File) PropertyKeys() ([]string, error) {
 }
 
 func (f *File) SampleRate() int {
+	if f.props == nil {
+		return 0
+	}
 	return int(C.taglib_audioproperties_samplerate(f.props))
 }
 

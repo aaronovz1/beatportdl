@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+- Preserve existing audio files when an overwrite download or HLS remux fails. Only completed transfers replace the destination.
+- Close and remove partial HLS staging files after failures instead of leaving UUID-named files in download directories.
+- Reject malformed HLS encryption IVs, ciphertext lengths, and padding with errors instead of panics or truncated output.
+- Reject empty or structurally invalid direct FLAC/M4A downloads before publishing files, even when tag fixes are disabled, using the existing TagLib dependency. This checks containers and audio properties, not a full audio decode. Reject empty HLS streams and remux output too.
+- Use short, bounded staging filenames so valid long track filenames can still be downloaded and remuxed.
+
+### Added
+
+- Regression tests with synthetic audio for failed and successful overwrites, partial-download and descriptor cleanup, malformed HLS data, invalid direct media, empty responses, long destination filenames, normal HLS output permissions, and direct downloads without FFmpeg.
+
 ### Removed
 
 - Remove standalone Beatsource API clients, URL/store routing, and search selection in line with upstream's removal and Beatport's announced migration. Downloads and searches now use Beatport only.
