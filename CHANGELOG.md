@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Refresh duplicate-detection indexes for each download run, record completed tracks immediately, and revalidate cached files after deletion or replacement. Filename corrections no longer cause repeat downloads within a run; file timestamp changes alone do not make a matching track different.
+- Reuse existing identity-matched files, including collision-suffixed names, before allocating a new filename. Preserve `track_exists` policies, audio-format separation and ownership of paths reserved by other active tracks.
 - Bound catalog authentication recovery to one refresh/replay, preserve replayed request bodies and final API errors, and close rejected responses before retrying.
 - Synchronize token snapshots, serialize refresh/login without blocking cancelled waiters, reuse concurrent refreshes, keep authorization cookies request-local, and close login/authorization responses.
 - Join playlist, chart and catalog download workers before returning on pagination or processing errors, preventing premature progress shutdown and cover cleanup.
@@ -17,6 +19,7 @@
 
 ### Added
 
+- Duplicate-detection regressions using real FLAC/M4A tags for completed downloads, fresh runs, removed/replaced files, timestamp-preserving tag edits, no-op updates, unchanged identities, collision suffixes, concurrent reservations and indexed tag-read counts.
 - Regression tests for persistent 401s, payload replay, concurrent auth/cache operations, response-body closure, cancellation, media timeouts, FFmpeg shutdown and collection-worker completion.
 - Regression tests with synthetic audio for failed and successful overwrites, partial-download and descriptor cleanup, malformed HLS data, invalid direct media, empty responses, long destination filenames, normal HLS output permissions, and direct downloads without FFmpeg.
 

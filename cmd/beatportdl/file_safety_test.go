@@ -66,7 +66,7 @@ func TestSaveTrackOverwritePreservesOriginalOnDownloadFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			app := directDownloadTestApplication(server.URL)
-			if _, err := app.saveTrack(nil, &beatport.Track{ID: 1, Name: "Existing"}, dir, "lossless"); err == nil {
+			if _, _, err := app.saveTrack(nil, &beatport.Track{ID: 1, Name: "Existing"}, dir, "lossless"); err == nil {
 				t.Error("saveTrack() accepted failed download")
 			}
 			assertFileContents(t, path, "original good audio")
@@ -87,8 +87,8 @@ func TestSaveTrackSuccessfulOverwriteReplacesOriginal(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := directDownloadTestApplication(server.URL)
-	got, err := app.saveTrack(nil, &beatport.Track{ID: 1, Name: "Existing"}, dir, "lossless")
-	if err != nil || got != path {
+	got, downloaded, err := app.saveTrack(nil, &beatport.Track{ID: 1, Name: "Existing"}, dir, "lossless")
+	if err != nil || got != path || !downloaded {
 		t.Fatalf("saveTrack() = %q, %v; want %q", got, err, path)
 	}
 	assertFileContents(t, path, string(audio))
@@ -331,7 +331,7 @@ func TestSaveTrackHLSOverwritePreservesOriginalOnRemuxFailure(t *testing.T) {
 	app.streamTrack = func(*beatport.Beatport, int64) (*beatport.TrackStream, error) {
 		return &beatport.TrackStream{Url: server.URL + "/hls/playlist.m3u8"}, nil
 	}
-	if _, err := app.saveTrack(nil, &beatport.Track{ID: 1, Name: "Existing"}, dir, "medium-hls"); err == nil {
+	if _, _, err := app.saveTrack(nil, &beatport.Track{ID: 1, Name: "Existing"}, dir, "medium-hls"); err == nil {
 		t.Fatal("saveTrack() error = nil, want remux error")
 	}
 	assertFileContents(t, path, "original good audio")

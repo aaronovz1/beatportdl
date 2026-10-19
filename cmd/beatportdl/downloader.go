@@ -384,36 +384,60 @@ func (app *application) findExistingTrackFileByIdentity(directory, fileExtension
 		return "", false
 	}
 
-	identityFiles := app.trackIdentityFilesForDirectory(directory, fileExtension)
+	index := app.trackIdentityFilesForDirectory(directory, fileExtension)
+	identity := trackFileIdentity{ISRC: isrc}
 	if trackID != 0 {
-		if path, ok := identityFiles[trackIDIdentityKey(strconv.FormatInt(trackID, 10))]; ok {
-			return path, true
-		}
+		identity.TrackID = strconv.FormatInt(trackID, 10)
 	}
-	if isrc != "" {
-		if path, ok := identityFiles[isrcIdentityKey(isrc)]; ok {
-			return path, true
+	for _, key := range identity.keys() {
+		for _, candidate := range index.byIdentity[key] {
+			if owner, active := app.activeFiles[candidate.path]; active && owner != trackID {
+				continue
+			}
+			info, err := os.Stat(candidate.path)
+			if err != nil || !info.Mode().IsRegular() {
+				index.remove(candidate.path)
+				continue
+			}
+			// Metadata can change in place even when sync tools preserve size and mtime.
+			currentIdentity, err := app.readExistingTrackFileIdentity(candidate.path)
+			if err != nil {
+				index.remove(candidate.path)
+				continue
+			}
+			if !candidate.unchanged(info) || currentIdentity != candidate.diskIdentity {
+				index.remove(candidate.path)
+				candidate = index.store(candidate.path, currentIdentity, info)
+			}
+			if candidate.identity.matches(trackID, isrc) {
+				return candidate.path, true
+			}
 		}
 	}
 
 	return "", false
 }
 
-func (app *application) trackIdentityFilesForDirectory(directory, fileExtension string) map[string]string {
+// The caller holds activeFilesMutex for both reservations and index mutations.
+func (app *application) trackIdentityFilesForDirectory(directory, fileExtension string) *trackIdentityIndex {
+	directory = filepath.Clean(directory)
 	cacheKey := directory + "\x00" + strings.ToLower(fileExtension)
 	if app.trackIdentityFiles == nil {
-		app.trackIdentityFiles = make(map[string]map[string]string)
+		app.trackIdentityFiles = make(map[string]*trackIdentityIndex)
 	}
-	if identityFiles, ok := app.trackIdentityFiles[cacheKey]; ok {
-		return identityFiles
+	if index, ok := app.trackIdentityFiles[cacheKey]; ok {
+		return index
 	}
 
-	identityFiles := make(map[string]string)
-	app.trackIdentityFiles[cacheKey] = identityFiles
+	index := &trackIdentityIndex{
+		files:      make(map[string]*indexedTrackFile),
+		byIdentity: make(map[string]map[string]*indexedTrackFile),
+	}
+	app.trackIdentityFiles[cacheKey] = index
 
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return identityFiles
+		return index
 	}
 
 	for _, entry := range entries {
@@ -422,18 +446,47 @@ func (app *application) trackIdentityFilesForDirectory(directory, fileExtension 
 		}
 
 		candidate := filepath.Join(directory, entry.Name())
+		info, err := os.Stat(candidate)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
 		identity, err := app.readExistingTrackFileIdentity(candidate)
 		if err != nil {
 			continue
 		}
-		for _, key := range identity.keys() {
-			if _, exists := identityFiles[key]; !exists {
-				identityFiles[key] = candidate
-			}
-		}
+		index.store(candidate, identity, info)
 	}
 
-	return identityFiles
+	return index
+}
+
+func (app *application) resetTrackFileState() {
+	app.activeFilesMutex.Lock()
+	defer app.activeFilesMutex.Unlock()
+	app.activeFiles = make(map[string]int64, len(app.urls))
+	app.trackIdentityFiles = nil
+}
+
+func (app *application) rememberCompletedTrackFile(path string, track *beatport.Track) {
+	app.activeFilesMutex.Lock()
+	defer app.activeFilesMutex.Unlock()
+	path = filepath.Clean(path)
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	diskIdentity, err := app.readExistingTrackFileIdentity(path)
+	if err != nil {
+		return
+	}
+	identity := trackFileIdentity{ISRC: track.ISRC}
+	if track.ID != 0 {
+		identity.TrackID = strconv.FormatInt(track.ID, 10)
+	}
+	index := app.trackIdentityFilesForDirectory(filepath.Dir(path), filepath.Ext(path))
+	// A successful transfer is known even when the user disables identity tags.
+	file := index.store(path, identity, info)
+	file.diskIdentity = diskIdentity
 }
 
 func (app *application) handleExistingTrackPath(path string) (string, error) {
@@ -462,7 +515,7 @@ func (app *application) existingTrackFileBelongsToDifferentTrack(path string, tr
 
 func (app *application) reserveSuffixedTrackFilePath(directory, fileName, fileExtension string, trackID int64) (string, error) {
 	for i := 1; ; i++ {
-		candidate := fmt.Sprintf("%s/%s (%d)%s", directory, fileName, i, fileExtension)
+		candidate := filepath.Join(directory, fmt.Sprintf("%s (%d)%s", fileName, i, fileExtension))
 		if owner, exists := app.activeFiles[candidate]; exists && owner != trackID {
 			continue
 		}
@@ -479,14 +532,10 @@ func (app *application) reserveSuffixedTrackFilePath(directory, fileName, fileEx
 }
 
 func (app *application) reserveTrackFilePath(directory, fileName, fileExtension string, trackID int64, isrc string) (string, error) {
-	basePath := fmt.Sprintf("%s/%s%s", directory, fileName, fileExtension)
+	basePath := filepath.Join(directory, fileName+fileExtension)
 
 	app.activeFilesMutex.Lock()
 	defer app.activeFilesMutex.Unlock()
-
-	if owner, exists := app.activeFiles[basePath]; exists && owner != trackID {
-		return app.reserveSuffixedTrackFilePath(directory, fileName, fileExtension, trackID)
-	}
 
 	if existingPath, ok := app.findExistingTrackFileByIdentity(directory, fileExtension, trackID, isrc); ok {
 		path, err := app.handleExistingTrackPath(existingPath)
@@ -494,6 +543,10 @@ func (app *application) reserveTrackFilePath(directory, fileName, fileExtension 
 			app.activeFiles[path] = trackID
 		}
 		return path, err
+	}
+
+	if owner, exists := app.activeFiles[basePath]; exists && owner != trackID {
+		return app.reserveSuffixedTrackFilePath(directory, fileName, fileExtension, trackID)
 	}
 
 	if _, err := os.Stat(basePath); err == nil {
@@ -506,13 +559,15 @@ func (app *application) reserveTrackFilePath(directory, fileName, fileExtension 
 			app.activeFiles[path] = trackID
 		}
 		return path, err
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
 
 	app.activeFiles[basePath] = trackID
 	return basePath, nil
 }
 
-func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track, directory string, quality string) (string, error) {
+func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track, directory string, quality string) (location string, downloaded bool, err error) {
 	var fileExtension string
 	var displayQuality string
 
@@ -523,7 +578,7 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 	case "medium-hls":
 		trackStream, err := app.fetchTrackStream(inst, track.ID)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		fileExtension = ".m4a"
 		displayQuality = "AAC 128kbps - HLS"
@@ -531,7 +586,7 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 	default:
 		trackDownload, err := app.fetchTrackDownload(inst, track.ID, quality)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		switch trackDownload.StreamQuality {
 		case ".128k.aac.mp4":
@@ -544,7 +599,7 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 			fileExtension = ".flac"
 			displayQuality = "FLAC"
 		default:
-			return "", fmt.Errorf("invalid stream quality: %s", trackDownload.StreamQuality)
+			return "", false, fmt.Errorf("invalid stream quality: %s", trackDownload.StreamQuality)
 		}
 		download = trackDownload
 	}
@@ -561,14 +616,14 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 	)
 	filePath, err := app.reserveTrackFilePath(directory, fileName, fileExtension, track.ID, track.ISRC)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if filePath == "" {
-		return "", nil
+		return "", false, nil
 	}
 	if _, err := os.Stat(filePath); err == nil && app.config.TrackExists == "update" {
 		app.infoLogWrapper(track.StoreUrl(), "updating tags")
-		return filePath, nil
+		return filePath, false, nil
 	}
 
 	var prefix string
@@ -581,20 +636,20 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 
 	if download != nil {
 		if err := app.downloadFile(download.Location, filePath, prefix); err != nil {
-			return "", err
+			return "", false, err
 		}
 	} else if stream != nil {
 		segments, key, err := app.getStreamSegments(stream.Url)
 		if err != nil {
-			return "", fmt.Errorf("get stream segments: %w", err)
+			return "", false, fmt.Errorf("get stream segments: %w", err)
 		}
 		segmentsFile, err := app.downloadSegments(directory, *segments, *key, prefix)
 		if err != nil {
-			return "", fmt.Errorf("download segments: %w", err)
+			return "", false, fmt.Errorf("download segments: %w", err)
 		}
 		defer os.Remove(segmentsFile)
 		if err := remuxToM4AContext(app.context(), segmentsFile, filePath); err != nil {
-			return "", fmt.Errorf("remux to m4a: %w", err)
+			return "", false, fmt.Errorf("remux to m4a: %w", err)
 		}
 	}
 
@@ -602,7 +657,7 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 		fmt.Printf("Finished downloading %s\n", infoDisplay)
 	}
 
-	return filePath, nil
+	return filePath, true, nil
 }
 
 const (
@@ -749,7 +804,7 @@ func (app *application) tagTrack(location string, track *beatport.Track, coverPa
 }
 
 func (app *application) handleTrack(inst *beatport.Beatport, track *beatport.Track, downloadsDir string, cover *trackCover) (bool, error) {
-	location, err := app.saveTrack(inst, track, downloadsDir, app.config.Quality)
+	location, downloaded, err := app.saveTrack(inst, track, downloadsDir, app.config.Quality)
 	if err != nil {
 		return false, fmt.Errorf("save track: %w", err)
 	}
@@ -767,6 +822,9 @@ func (app *application) handleTrack(inst *beatport.Beatport, track *beatport.Tra
 
 	if err = app.tagTrack(location, track, coverPath); err != nil {
 		return false, fmt.Errorf("tag track: %w", err)
+	}
+	if downloaded || app.config.FixTags {
+		app.rememberCompletedTrackFile(location, track)
 	}
 	return true, nil
 }

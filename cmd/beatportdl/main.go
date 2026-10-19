@@ -41,7 +41,7 @@ type application struct {
 	readTrackFileIdentity func(path string) (trackFileIdentity, error)
 	downloadTrack         func(inst *beatport.Beatport, id int64, quality string) (*beatport.TrackDownload, error)
 	streamTrack           func(inst *beatport.Beatport, id int64) (*beatport.TrackStream, error)
-	trackIdentityFiles    map[string]map[string]string
+	trackIdentityFiles    map[string]*trackIdentityIndex
 
 	bp *beatport.Beatport
 }
@@ -127,7 +127,7 @@ func main() {
 
 		app.pbp = mpb.New(mpb.WithAutoRefresh(), mpb.WithOutput(color.Output))
 		app.logWriter = app.pbp
-		app.activeFiles = make(map[string]int64, len(app.urls))
+		app.resetTrackFileState()
 
 		for _, url := range app.urls {
 			app.globalWorker(func() {

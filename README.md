@@ -98,6 +98,8 @@ Available `track_exists` options:
 - `overwrite` Re-download
 - `update` Update tags
 
+Existing-file checks use embedded track IDs or ISRCs in the destination directory, separately for each audio format. Matching files keep their existing names, including collision suffixes. The index is rebuilt for each download run and updated as tracks finish; deleted or replaced cached files are rechecked. Changed timestamps alone do not cause a re-download when the embedded identity still matches. Files without identity tags retain filename-based matching across runs; files in other directories are not searched.
+
 Available template keywords for filenames and directories (`*_template`):
 
 - Track: `id`,`name`,`mix_name`,`slug`,`artists`,`remixers`,`number`,`length`,`key`,`bpm`,`genre`,`subgenre`,`genre_with_subgenre`,`subgenre_or_genre`,`isrc`,`label`
