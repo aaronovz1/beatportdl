@@ -183,6 +183,8 @@ During a download, the first `Ctrl+C` cancels queued work, active HTTP transfers
 
 Media requests wait up to 40 seconds for response headers and up to 30 minutes overall per request, allowing large audio downloads more time than catalog requests. Authentication recovery retries a rejected catalog request once after refreshing the token, then reports a persistent authorization error.
 
+An `invalid API response` error means a catalog response was incomplete or malformed; it is not treated as an empty playlist or a valid resource. Valid empty results remain supported, and completed tracks are kept.
+
 Run BeatportDL and enter a Beatport URL or search query:
 
 ```shell

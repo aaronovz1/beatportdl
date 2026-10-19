@@ -1,7 +1,6 @@
 package beatport
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -19,9 +18,5 @@ func (b *Beatport) getCatalogTracks(scope string, id int64, page int, params str
 		return nil, err
 	}
 	defer res.Body.Close()
-	var response Paginated[Track]
-	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
-		return nil, err
-	}
-	return &response, nil
+	return decodeCatalogPage[Track](res.Body)
 }

@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Reject malformed HTTP-success catalog metadata and collection pages instead of treating them as valid resources or empty results. Require positive resource IDs and explicit results arrays, validate collection item identities and pagination values, and reject trailing JSON. Preserve valid empty pages, optional/unknown metadata, HTTP errors and response-body cleanup.
 - Reject negative search-result selections instead of panicking, while preserving valid track/release selections and their requested order.
 - Return validation errors for incomplete library and localized catalog URLs instead of indexing missing URL components.
 - Reject unsafe `whitespace_character` values from config files and CLI overrides. Sanitize substituted path components again so replacement text cannot introduce directory traversal, forbidden filename characters or reserved names; preserve intentional directory-template separators.
@@ -23,6 +24,7 @@
 
 ### Added
 
+- Catalog response regressions for missing/null/invalid metadata, malformed pages and playlist items, valid empty pages, pagination/result preservation, HTTP errors, read failures and response-body closure across all catalog metadata getters.
 - Regression tests for invalid search selections, incomplete and supported URL routes, safe/unsafe whitespace replacements and overrides, JSON string decoding, and legacy-filename identity matching for FLAC/M4A.
 - Duplicate-detection regressions using real FLAC/M4A tags for completed downloads, fresh runs, removed/replaced files, timestamp-preserving tag edits, no-op updates, unchanged identities, collision suffixes, concurrent reservations and indexed tag-read counts.
 - Regression tests for persistent 401s, payload replay, concurrent auth/cache operations, response-body closure, cancellation, media timeouts, FFmpeg shutdown and collection-worker completion.

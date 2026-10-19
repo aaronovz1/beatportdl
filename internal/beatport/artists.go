@@ -1,7 +1,6 @@
 package beatport
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -48,11 +47,7 @@ func (b *Beatport) GetArtist(id int64) (*Artist, error) {
 		return nil, err
 	}
 	defer res.Body.Close()
-	response := &Artist{}
-	if err = json.NewDecoder(res.Body).Decode(response); err != nil {
-		return nil, err
-	}
-	return response, nil
+	return decodeCatalogResource[Artist](res.Body)
 }
 
 func (b *Beatport) GetArtistTracks(id int64, page int, params string) (*Paginated[Track], error) {

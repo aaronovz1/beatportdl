@@ -1,7 +1,6 @@
 package beatport
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -73,11 +72,7 @@ func (b *Beatport) GetChart(id int64) (*Chart, error) {
 		return nil, err
 	}
 	defer res.Body.Close()
-	response := &Chart{}
-	if err = json.NewDecoder(res.Body).Decode(response); err != nil {
-		return nil, err
-	}
-	return response, nil
+	return decodeCatalogResource[Chart](res.Body)
 }
 
 func (b *Beatport) GetChartTracks(id int64, page int, params string) (*Paginated[Track], error) {
@@ -91,9 +86,5 @@ func (b *Beatport) GetChartTracks(id int64, page int, params string) (*Paginated
 		return nil, err
 	}
 	defer res.Body.Close()
-	var response Paginated[Track]
-	if err = json.NewDecoder(res.Body).Decode(&response); err != nil {
-		return nil, err
-	}
-	return &response, nil
+	return decodeCatalogPage[Track](res.Body)
 }

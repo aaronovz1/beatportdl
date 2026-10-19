@@ -97,11 +97,7 @@ func (b *Beatport) GetTrack(id int64) (*Track, error) {
 		return nil, err
 	}
 	defer res.Body.Close()
-	response := &Track{}
-	if err = json.NewDecoder(res.Body).Decode(response); err != nil {
-		return nil, err
-	}
-	return response, nil
+	return decodeCatalogResource[Track](res.Body)
 }
 
 func (b *Beatport) DownloadTrack(id int64, quality string) (*TrackDownload, error) {
