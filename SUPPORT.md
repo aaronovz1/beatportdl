@@ -1,6 +1,8 @@
 # Support
 
-This maintained fork supports users with active Beatport or Beatsource streaming subscriptions.
+This maintained fork supports users with active Beatport streaming subscriptions.
+
+Standalone Beatsource support has been removed following the upstream change and Beatport's [migration guidance](https://support.beatport.com/hc/en-us/articles/46607140394004-Beatsource-Migration-FAQ). Use your migrated Beatport account and Beatport URLs. Old Beatsource IDs are not automatically converted, and local config, credentials, and downloaded files are left unchanged.
 
 ## Supported
 
@@ -21,7 +23,6 @@ Include:
 
 - BeatportDL version or commit hash.
 - OS and architecture.
-- Store: Beatport, Beatsource, or both.
 - Active subscription tier.
 - Configured quality.
 - URL type: track, release, playlist, chart, label, artist, or search query.
@@ -31,7 +32,6 @@ Remove usernames, passwords, tokens, cookies, account identifiers, and private l
 
 ## Common 400/403 Causes
 
-- `400` on download requests often means the requested quality is not available for the selected store or your subscription tier.
+- `400` on download requests often means the requested quality is not available for your Beatport subscription tier.
 - `403` on login or token refresh usually means invalid credentials or stale cached credentials.
 - `403` on track, release, or download requests can also mean territorial availability restrictions or an unsupported subscription tier for that resource.
-- If you switch between Beatport and Beatsource, include which store you are using in the report because the same quality setting may not be available in both.

@@ -42,24 +42,12 @@ body:
       placeholder: "1.0.8 or commit hash"
     validations:
       required: true
-  - type: dropdown
-    id: store
-    attributes:
-      label: Store
-      description: Which service were you using?
-      options:
-        - Beatport
-        - Beatsource
-        - Both
-        - Not sure
-    validations:
-      required: true
   - type: input
     id: subscription
     attributes:
       label: Subscription tier
-      description: Active streaming tier for the affected store. Do not include account identifiers.
-      placeholder: "Beatport Advanced, Beatport Professional, Beatsource Pro+"
+      description: Active Beatport streaming tier. Do not include account identifiers.
+      placeholder: "Beatport Advanced or Professional"
     validations:
       required: true
   - type: dropdown

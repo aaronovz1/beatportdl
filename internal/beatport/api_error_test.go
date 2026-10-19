@@ -11,7 +11,6 @@ func TestAPIErrorHintForAuthenticationFailure(t *testing.T) {
 		StatusCode: http.StatusForbidden,
 		Detail:     "invalid credentials",
 		Endpoint:   loginEndpoint,
-		Store:      StoreBeatport,
 	}
 
 	if got := err.Hint(); !strings.Contains(got, "authentication failed") {
@@ -24,7 +23,6 @@ func TestAPIErrorHintForQualityRestrictedDownload(t *testing.T) {
 		StatusCode: http.StatusForbidden,
 		Detail:     "forbidden",
 		Endpoint:   "/catalog/tracks/123/download/?quality=lossless",
-		Store:      StoreBeatport,
 	}
 
 	got := err.Hint()
@@ -41,7 +39,6 @@ func TestAPIErrorHintForTerritorialRestriction(t *testing.T) {
 		StatusCode: http.StatusForbidden,
 		Detail:     "not available in your territory",
 		Endpoint:   "/catalog/releases/123/",
-		Store:      StoreBeatport,
 	}
 
 	if got := err.Hint(); !strings.Contains(got, "territorial availability") {
@@ -54,7 +51,6 @@ func TestAPIErrorHintForGenericBadRequest(t *testing.T) {
 		StatusCode: http.StatusBadRequest,
 		Detail:     "",
 		Endpoint:   "/catalog/releases/123/",
-		Store:      StoreBeatport,
 	}
 
 	got := err.Hint()

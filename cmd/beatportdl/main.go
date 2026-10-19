@@ -42,7 +42,6 @@ type application struct {
 	trackIdentityFiles    map[string]map[string]string
 
 	bp *beatport.Beatport
-	bs *beatport.Beatport
 }
 
 func main() {
@@ -101,8 +100,7 @@ func main() {
 	}
 
 	auth := beatport.NewAuth(cfg.Username, cfg.Password, cachePath)
-	bp := beatport.New(beatport.StoreBeatport, cfg.Proxy, auth)
-	bs := beatport.New(beatport.StoreBeatsource, cfg.Proxy, auth)
+	bp := beatport.New(cfg.Proxy, auth)
 
 	if err := auth.LoadCache(); err != nil {
 		if err := auth.Init(bp); err != nil {
@@ -111,7 +109,6 @@ func main() {
 	}
 
 	app.bp = bp
-	app.bs = bs
 
 	for _, arg := range opts.Args {
 		if strings.HasSuffix(arg, ".txt") {

@@ -8,42 +8,35 @@ import (
 	"testing"
 )
 
-func TestCatalogTrackRequestsPreserveFiltersAndStore(t *testing.T) {
-	for _, store := range []Store{StoreBeatport, StoreBeatsource} {
-		for _, scope := range []string{"label_id", "artist_id"} {
-			t.Run(string(store)+"/"+scope, func(t *testing.T) {
-				inst := authenticatedTestClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-					wantHost := "api.beatport.com"
-					if store == StoreBeatsource {
-						wantHost = "api.beatsource.com"
-					}
-					if req.URL.Host != wantHost || req.URL.Path != "/v4/catalog/tracks/" {
-						t.Errorf("unexpected endpoint: %s", req.URL)
-					}
-					query := req.URL.Query()
-					if len(query[scope]) != 1 || query.Get(scope) != "42" || len(query["page"]) != 1 || query.Get("page") != "3" {
-						t.Errorf("incorrect scope/pagination: %v", query)
-					}
-					if query.Get("genre_name") != "Minimal / Deep Tech" || query.Get("publish_date") != "2026-01-01:2026-10-14" || query.Get("order_by") != "-publish_date" {
-						t.Errorf("lost filters: %v", query)
-					}
-					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
-						Body: io.NopCloser(strings.NewReader(`{"next":null,"results":[{"id":101}]}`)), Request: req}, nil
-				})})
-				inst.store = store
-				fetch := inst.GetLabelTracks
-				if scope == "artist_id" {
-					fetch = inst.GetArtistTracks
+func TestCatalogTrackRequestsPreserveFiltersOnBeatport(t *testing.T) {
+	for _, scope := range []string{"label_id", "artist_id"} {
+		t.Run(scope, func(t *testing.T) {
+			inst := authenticatedTestClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Scheme != "https" || req.URL.Host != "api.beatport.com" || req.URL.Path != "/v4/catalog/tracks/" {
+					t.Errorf("unexpected endpoint: %s", req.URL)
 				}
-				page, err := fetch(42, 3, "genre_name=Minimal+%2F+Deep+Tech&publish_date=2026-01-01%3A2026-10-14&order_by=-publish_date&"+scope+"=999&page=99")
-				if err != nil {
-					t.Fatal(err)
+				query := req.URL.Query()
+				if len(query[scope]) != 1 || query.Get(scope) != "42" || len(query["page"]) != 1 || query.Get("page") != "3" {
+					t.Errorf("incorrect scope/pagination: %v", query)
 				}
-				if page.Next != nil || len(page.Results) != 1 || page.Results[0].Store != store {
-					t.Fatalf("incorrect response or track store: %+v", page)
+				if query.Get("genre_name") != "Minimal / Deep Tech" || query.Get("publish_date") != "2026-01-01:2026-10-14" || query.Get("order_by") != "-publish_date" {
+					t.Errorf("lost filters: %v", query)
 				}
-			})
-		}
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+					Body: io.NopCloser(strings.NewReader(`{"next":null,"results":[{"id":101}]}`)), Request: req}, nil
+			})})
+			fetch := inst.GetLabelTracks
+			if scope == "artist_id" {
+				fetch = inst.GetArtistTracks
+			}
+			page, err := fetch(42, 3, "genre_name=Minimal+%2F+Deep+Tech&publish_date=2026-01-01%3A2026-10-14&order_by=-publish_date&"+scope+"=999&page=99")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if page.Next != nil || len(page.Results) != 1 || page.Results[0].ID != 101 {
+				t.Fatalf("incorrect response: %+v", page)
+			}
+		})
 	}
 }
 
@@ -110,7 +103,7 @@ func TestGetArtistTracksUsesScopedCatalogEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Next == nil || len(page.Results) != 1 || page.Results[0].Store != StoreBeatport || page.Results[0].Release.ID != 9 {
+	if page.Next == nil || len(page.Results) != 1 || page.Results[0].Release.ID != 9 {
 		t.Fatalf("unexpected catalog page: %+v", page)
 	}
 }

@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        BeatportDL requires an active Beatport or Beatsource streaming plan. This project does not provide help bypassing subscriptions, territorial restrictions, account limits, or other platform access controls.
+        BeatportDL requires an active Beatport streaming plan. This project does not provide help bypassing subscriptions, territorial restrictions, account limits, or other platform access controls.
   - type: textarea
     id: text
     attributes:
@@ -25,6 +25,6 @@ body:
     id: context
     attributes:
       label: Context
-      description: Include OS, store, subscription tier, quality, URL type, and sanitized logs if the question is about behavior.
+      description: Include OS, Beatport subscription tier, quality, URL type, and sanitized logs if the question is about behavior.
     validations:
       required: false

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"unspok3n/beatportdl/config"
@@ -73,9 +72,11 @@ func Setup(overrides ...func(*config.AppConfig)) (cfg *config.AppConfig, cachePa
 }
 
 func (app *application) mainPrompt() {
+	// The previous download's progress writer may already be shut down.
+	app.logWriter = os.Stdout
 	fmt.Print("Enter url or search query: ")
 	input := GetLine()
-	if strings.HasPrefix(input, "https://www.beatport.com") || strings.HasPrefix(input, "https://www.beatsource.com") {
+	if lower := strings.ToLower(input); strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://") {
 		app.urls = append(app.urls, input)
 	} else {
 		app.search(input)
@@ -83,17 +84,12 @@ func (app *application) mainPrompt() {
 }
 
 func (app *application) search(input string) {
-	var storeTag string
-	var inst *beatport.Beatport
-	storeTag, input = extractStoreTag(input)
-	switch storeTag {
-	default:
-		inst = app.bp
-	case "beatsource":
-		inst = app.bs
+	query, err := beatportSearchQuery(input)
+	if err != nil {
+		app.LogError("search", err)
+		return
 	}
-
-	results, err := inst.Search(input)
+	results, err := app.bp.Search(query)
 	if err != nil {
 		app.FatalError("beatport", err)
 	}
@@ -155,17 +151,20 @@ func (app *application) search(input string) {
 	}
 }
 
-func extractStoreTag(query string) (store, trimmedQuery string) {
-	re := regexp.MustCompile(`@\w+`)
-	matches := re.FindAllString(query, -1)
-	if len(matches) > 0 {
-		store = strings.TrimPrefix(matches[0], "@")
-		trimmedQuery = re.ReplaceAllString(query, "")
-		trimmedQuery = strings.TrimSpace(trimmedQuery)
-	} else {
-		trimmedQuery = query
+func beatportSearchQuery(input string) (string, error) {
+	var terms []string
+	for _, term := range strings.Fields(input) {
+		switch strings.ToLower(term) {
+		case "@beatsource":
+			return "", beatport.ErrBeatsourceRemoved
+		case "@beatport":
+			continue
+		default:
+			terms = append(terms, term)
+		}
 	}
-	return store, trimmedQuery
+
+	return strings.Join(terms, " "), nil
 }
 
 func (app *application) parseTextFile(path string) {
@@ -183,6 +182,5 @@ func (app *application) parseTextFile(path string) {
 }
 
 var (
-	ErrUnsupportedLinkType  = errors.New("unsupported link type")
-	ErrUnsupportedLinkStore = errors.New("unsupported link store")
+	ErrUnsupportedLinkType = errors.New("unsupported link type")
 )

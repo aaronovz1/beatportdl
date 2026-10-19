@@ -68,7 +68,6 @@ func TestFetchDoesNotRetryPostTimeout(t *testing.T) {
 
 func authenticatedTestClient(client *http.Client) *Beatport {
 	return &Beatport{
-		store:   StoreBeatport,
 		client:  client,
 		headers: map[string]string{},
 		auth: &Auth{tokenPair: &tokenPair{

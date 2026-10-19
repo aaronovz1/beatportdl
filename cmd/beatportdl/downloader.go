@@ -813,16 +813,7 @@ func (app *application) handleUrl(url string) {
 		return
 	}
 
-	var inst *beatport.Beatport
-	switch link.Store {
-	case beatport.StoreBeatport:
-		inst = app.bp
-	case beatport.StoreBeatsource:
-		inst = app.bs
-	default:
-		app.LogError("handle URL", ErrUnsupportedLinkStore)
-		return
-	}
+	inst := app.bp
 
 	switch link.Type {
 	case beatport.TrackLink:

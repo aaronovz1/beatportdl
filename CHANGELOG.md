@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Removed
+
+- Remove standalone Beatsource API clients, URL/store routing, and search selection in line with upstream's removal and Beatport's announced migration. Downloads and searches now use Beatport only.
+- Remove Beatsource support claims, obsolete subscription examples, and the multi-store issue field from the README, support/contribution guides, and issue templates.
+
+### Changed
+
+- Reject old Beatsource URLs and `@beatsource` queries with migration guidance instead of silently treating them as Beatport resources. Use migrated Beatport URLs; existing config, credentials, and downloaded files are left unchanged.
+- Restore live console logging at each interactive prompt so migration errors remain visible after a previous download's progress display has shut down. Add tests for Beatport-only requests and resource links, removed inputs, and repeat-prompt guidance.
+
 ## v1.1.1 - 2026-10-19
 
 This release improves label and artist filtering and download organization, while preserving existing-file detection and cover cleanup.

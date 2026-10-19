@@ -15,13 +15,11 @@ import (
 
 const (
 	beatportBaseUrl       = "https://api.beatport.com/v4"
-	beatsourceBaseUrl     = "https://api.beatsource.com/v4"
 	maxGetRequestAttempts = 3
 	getRetryBaseDelay     = 250 * time.Millisecond
 )
 
 type Beatport struct {
-	store   Store
 	client  *http.Client
 	headers map[string]string
 	auth    *Auth
@@ -36,7 +34,6 @@ type APIError struct {
 	StatusCode int
 	Detail     string
 	Endpoint   string
-	Store      Store
 }
 
 func (e *APIError) Error() string {
@@ -65,12 +62,12 @@ func (e *APIError) Hint() string {
 		quality := requestedQualityFromEndpoint(e.Endpoint)
 		if quality != "" && (e.StatusCode == http.StatusBadRequest || e.StatusCode == http.StatusForbidden) {
 			return fmt.Sprintf(
-				"requested quality %q may not be available for this store or subscription tier, or the track may be unavailable in your region",
+				"requested quality %q may not be available for your Beatport subscription tier, or the track may be unavailable in your region",
 				quality,
 			)
 		}
 		if e.StatusCode == http.StatusForbidden {
-			return "download access was denied; check your active subscription tier, selected store, and territorial availability"
+			return "download access was denied; check your active Beatport subscription tier and territorial availability"
 		}
 	}
 
@@ -81,12 +78,12 @@ func (e *APIError) Hint() string {
 		if strings.Contains(detail, "subscription") || strings.Contains(detail, "plan") {
 			return "access was denied; check that your subscription tier includes this operation and quality"
 		}
-		return "access was denied; check login state, subscription tier, selected store, and territorial availability"
+		return "access was denied; check login state, Beatport subscription tier, and territorial availability"
 	}
 
 	if e.StatusCode == http.StatusBadRequest {
 		if strings.Contains(detail, "quality") {
-			return "the requested quality was rejected; check the configured quality against your subscription tier and selected store"
+			return "the requested quality was rejected; check the configured quality against your Beatport subscription tier"
 		}
 		return "the request was rejected; check the configured quality, URL type, and whether the resource is available to your account"
 	}
@@ -111,7 +108,7 @@ type Paginated[T any] struct {
 	Results  []T     `json:"results"`
 }
 
-func New(store Store, proxyUrl string, auth *Auth) *Beatport {
+func New(proxyUrl string, auth *Auth) *Beatport {
 	transport := &http.Transport{}
 	if proxyUrl != "" {
 		proxyURL, _ := url.Parse(proxyUrl)
@@ -125,8 +122,7 @@ func New(store Store, proxyUrl string, auth *Auth) *Beatport {
 		"user-agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
 	}
 	f := Beatport{
-		store: store,
-		auth:  auth,
+		auth: auth,
 		client: &http.Client{
 			Timeout:   time.Duration(40) * time.Second,
 			Transport: transport,
@@ -165,15 +161,7 @@ func (b *Beatport) fetch(method, endpoint string, payload interface{}, contentTy
 		}
 	}
 
-	var baseUrl string
-	switch b.store {
-	default:
-		baseUrl = beatportBaseUrl
-	case StoreBeatsource:
-		baseUrl = beatsourceBaseUrl
-	}
-
-	req, err := http.NewRequest(method, baseUrl+endpoint, &body)
+	req, err := http.NewRequest(method, beatportBaseUrl+endpoint, &body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -213,13 +201,11 @@ func (b *Beatport) fetch(method, endpoint string, payload interface{}, contentTy
 				StatusCode: resp.StatusCode,
 				Detail:     detail,
 				Endpoint:   endpoint,
-				Store:      b.store,
 			}
 		}
 		return nil, &APIError{
 			StatusCode: resp.StatusCode,
 			Endpoint:   endpoint,
-			Store:      b.store,
 		}
 	}
 

@@ -1,8 +1,8 @@
 # BeatportDL
 
-Beatport & Beatsource downloader (FLAC, AAC)
+Beatport downloader (FLAC, AAC)
 
-_Requires an active [Beatport](https://stream.beatport.com/) or [Beatsource](https://stream.beatsource.com/) streaming plan._
+_Requires an active [Beatport](https://stream.beatport.com/) streaming plan._
 
 > This is the maintained fork at [aaronovz1/beatportdl](https://github.com/aaronovz1/beatportdl). It keeps compatibility with the original [unspok3n/beatportdl](https://github.com/unspok3n/beatportdl) project while carrying forward fixes, user support, and releases from this fork.
 
@@ -10,9 +10,11 @@ _Requires an active [Beatport](https://stream.beatport.com/) or [Beatsource](htt
 
 ## Support Policy
 
-BeatportDL works only with active Beatport or Beatsource streaming subscriptions. This fork does not provide help bypassing subscriptions, territorial restrictions, account limits, or other platform access controls.
+BeatportDL works only with active Beatport streaming subscriptions. This fork does not provide help bypassing subscriptions, territorial restrictions, account limits, or other platform access controls.
 
-For bugs and feature requests, please use the issue templates in this fork and include your OS, BeatportDL version, store, subscription tier, configured quality, URL type, and sanitized logs. Remove usernames, passwords, tokens, cookies, and local private paths before posting logs.
+For bugs and feature requests, please use the issue templates in this fork and include your OS, BeatportDL version, subscription tier, configured quality, URL type, and sanitized logs. Remove usernames, passwords, tokens, cookies, and local private paths before posting logs.
+
+Beatsource is no longer supported. Beatport is phasing out the standalone service and migrating accounts to Beatport; see the official [Beatsource migration FAQ](https://support.beatport.com/hc/en-us/articles/46607140394004-Beatsource-Migration-FAQ). Use the migrated URLs from your Beatport account. Old Beatsource URLs and `@beatsource` searches are rejected with migration guidance; URLs are not automatically rewritten because resource IDs may differ. Existing config and credential files are not migrated or deleted by this change.
 
 ## Label and Artist Filters
 
@@ -80,14 +82,14 @@ This will create a new `beatportdl-config.yml` file. You can put the following o
 If the Beatport credentials are correct, you should also see the file `beatportdl-credentials.json` appear in the BeatportDL directory.
 _If you accidentally entered an incorrect password and got an error, you can always manually edit the config file_
 
-Download quality options, per Beatport/Beatsource subscription type:
+Download quality options for Beatport (availability depends on your active subscription tier and the track):
 
 | Option       | Description                                                                                                  | Requires at least              | Notes                                                                   |
 | ------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------ | ----------------------------------------------------------------------- |
-| `medium-hls` | 128 kbps AAC through `/stream` endpoint (IMPORTANT: requires [ffmpeg](https://www.ffmpeg.org/download.html)) | Essential / Beatsource         | Same as `medium` on Advanced but uses a slightly slower download method |
-| `medium`     | 128 kbps AAC                                                                                                 | Advanced / Beatsource Pro+     |                                                                         |
-| `high`       | 256 kbps AAC                                                                                                 | Professional / Beatsource Pro+ |                                                                         |
-| `lossless`   | 44.1 kHz FLAC                                                                                                | Professional / Beatsource Pro+ |                                                                         |
+| `medium-hls` | 128 kbps AAC through `/stream` endpoint (IMPORTANT: requires [ffmpeg](https://www.ffmpeg.org/download.html)) | Essential                     | Same as `medium` on Advanced but uses a slightly slower download method |
+| `medium`     | 128 kbps AAC                                                                                                 | Advanced                      |                                                                         |
+| `high`       | 256 kbps AAC                                                                                                 | Professional                  |                                                                         |
+| `lossless`   | 44.1 kHz FLAC                                                                                                | Professional                  |                                                                         |
 
 Available `track_exists` options:
 
@@ -171,14 +173,14 @@ Proxy URL format example: `http://username:password@127.0.0.1:8080`
 
 ## Usage
 
-Run BeatportDL and enter Beatport or Beatsource URL or search query:
+Run BeatportDL and enter a Beatport URL or search query:
 
 ```shell
 ./beatportdl
 Enter url or search query:
 ```
 
-By default, search returns the results from beatport, if you want to search on beatsource instead, include `@beatsource` tag in the query
+Search returns Beatport tracks and releases.
 
 ...or specify the URL using positional arguments:
 

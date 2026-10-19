@@ -1,6 +1,9 @@
 package beatport
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseUrlTrack(t *testing.T) {
 	link, err := (&Beatport{}).ParseUrl("https://www.beatport.com/track/strobe/1696999")
@@ -8,9 +11,6 @@ func TestParseUrlTrack(t *testing.T) {
 		t.Fatalf("ParseUrl() error = %v", err)
 	}
 
-	if link.Store != StoreBeatport {
-		t.Fatalf("Store = %q, want %q", link.Store, StoreBeatport)
-	}
 	if link.Type != TrackLink {
 		t.Fatalf("Type = %q, want %q", link.Type, TrackLink)
 	}
@@ -36,19 +36,16 @@ func TestParseUrlKeepsLabelQueryParams(t *testing.T) {
 	}
 }
 
-func TestParseUrlBeatsourceRelease(t *testing.T) {
-	link, err := (&Beatport{}).ParseUrl("https://www.beatsource.com/release/example/42")
-	if err != nil {
-		t.Fatalf("ParseUrl() error = %v", err)
-	}
-
-	if link.Store != StoreBeatsource {
-		t.Fatalf("Store = %q, want %q", link.Store, StoreBeatsource)
-	}
-	if link.Type != ReleaseLink {
-		t.Fatalf("Type = %q, want %q", link.Type, ReleaseLink)
-	}
-	if link.ID != 42 {
-		t.Fatalf("ID = %d, want 42", link.ID)
+func TestParseUrlRejectsRemovedBeatsource(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://www.beatsource.com/release/example/42",
+		"https://api.beatsource.com/v4/catalog/tracks/42/",
+		"https://beatsource.com/track/example/42",
+		"https://WWW.BEATSOURCE.COM/track/example/42",
+	} {
+		link, err := (&Beatport{}).ParseUrl(rawURL)
+		if link != nil || err == nil || !strings.Contains(err.Error(), "Beatsource support has been removed") {
+			t.Errorf("ParseUrl(%q) = %+v, %v; want migration guidance and no link", rawURL, link, err)
+		}
 	}
 }

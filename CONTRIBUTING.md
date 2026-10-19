@@ -6,7 +6,7 @@ Thanks for helping keep this maintained fork healthy.
 
 This fork aims to stay compatible with the original `unspok3n/beatportdl` behavior while accepting maintenance fixes, build improvements, documentation updates, and carefully scoped features.
 
-Do not submit changes that bypass subscriptions, territorial restrictions, account limits, or other platform access controls. BeatportDL requires an active Beatport or Beatsource streaming plan.
+Do not submit changes that bypass subscriptions, territorial restrictions, account limits, or other platform access controls. BeatportDL requires an active Beatport streaming plan. Standalone Beatsource integration is no longer supported; preserve clear migration errors for old URLs and search tags.
 
 ## Development
 

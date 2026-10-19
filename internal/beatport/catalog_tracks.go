@@ -23,8 +23,5 @@ func (b *Beatport) getCatalogTracks(scope string, id int64, page int, params str
 	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
 		return nil, err
 	}
-	for i := range response.Results {
-		response.Results[i].Store = b.store
-	}
 	return &response, nil
 }
