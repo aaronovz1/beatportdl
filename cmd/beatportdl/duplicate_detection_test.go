@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -213,6 +214,42 @@ func TestNoOpUpdateDoesNotInventTrackIdentity(t *testing.T) {
 	got, err := app.reserveTrackFilePath(dir, "Corrected", ".flac", 101, "")
 	if want := filepath.Join(dir, "Corrected.flac"); got != want || err != nil {
 		t.Fatalf("unverified file claimed requested identity: %q, %v; want %q", got, err, want)
+	}
+}
+
+func TestDecodedJSONNameReusesExistingLegacyFilename(t *testing.T) {
+	for _, extension := range []string{".flac", ".m4a"} {
+		t.Run(extension, func(t *testing.T) {
+			dir := t.TempDir()
+			legacyName := "Caf\uff3cu00e9" + extension
+			writeIdentityAudio(t, filepath.Join(dir, legacyName), "101", "GBABC2600001")
+			var track beatport.Track
+			if err := json.Unmarshal([]byte(`{"id":101,"name":"Caf\u00e9","isrc":"GBABC2600001"}`), &track); err != nil {
+				t.Fatal(err)
+			}
+			if track.Name != "Caf\u00e9" {
+				t.Fatalf("track name = %q, want decoded name", track.Name)
+			}
+			app := identityTestApplication("skip")
+			app.config.Quality = "lossless"
+			app.config.TrackFileTemplate = "{name}"
+			app.config.FixTags = true
+			app.downloadTrack = func(*beatport.Beatport, int64, string) (*beatport.TrackDownload, error) {
+				quality := ".flac"
+				if extension == ".m4a" {
+					quality = ".256k.aac.mp4"
+				}
+				return &beatport.TrackDownload{Location: "unused-for-identity-match", StreamQuality: quality}, nil
+			}
+			cover := &trackCover{download: func() (string, error) {
+				t.Error("skipped legacy track requested a cover")
+				return "", errors.New("unexpected cover request")
+			}}
+			if processed, err := app.handleTrack(nil, &track, dir, cover); processed || err != nil {
+				t.Fatalf("legacy track = %v, %v; want skipped", processed, err)
+			}
+			assertCatalogFiles(t, dir, legacyName)
+		})
 	}
 }
 

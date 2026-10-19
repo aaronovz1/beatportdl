@@ -1,12 +1,13 @@
 package beatport
 
 import (
-	"bytes"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
+	"unspok3n/beatportdl/internal/validator"
 )
 
 type SanitizedString string
@@ -32,16 +33,16 @@ func (d *Duration) Display() string {
 }
 
 var templatePlaceholderRegexp = regexp.MustCompile(`\{(\w+)}`)
-var sanitizedStringReplacer = strings.NewReplacer(
-	"\\n", "",
-	"\\r", "",
-	"\\t", "",
-)
 
 func (s *SanitizedString) UnmarshalJSON(data []byte) error {
-	rawValue := string(bytes.Trim(data, `"`))
-	sanitized := sanitizedStringReplacer.Replace(rawValue)
-	*s = SanitizedString(strings.Join(strings.Fields(sanitized), " "))
+	var rawValue *string
+	if err := json.Unmarshal(data, &rawValue); err != nil {
+		return err
+	}
+	if rawValue == nil {
+		return nil
+	}
+	*s = SanitizedString(strings.Join(strings.Fields(*rawValue), " "))
 	return nil
 }
 
@@ -88,7 +89,7 @@ var windowsReservedPathNames = map[string]struct{}{
 
 func sanitizePathComponent(name string) string {
 	name = strings.Map(func(r rune) rune {
-		if r < 32 || r == 127 {
+		if unicode.IsControl(r) {
 			return -1
 		}
 		return r
@@ -131,6 +132,9 @@ func SanitizePath(name string, whitespace string) string {
 	name = sanitizePathComponent(name)
 	if whitespace != "" {
 		name = strings.ReplaceAll(name, " ", whitespace)
+	}
+	if !validator.SafePathReplacement(whitespace) {
+		return sanitizePathComponent(name)
 	}
 	return name
 }

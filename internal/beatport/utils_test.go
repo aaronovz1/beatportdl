@@ -2,6 +2,8 @@ package beatport
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,6 +23,55 @@ func TestSanitizedStringUnmarshalRemovesEscapedWhitespace(t *testing.T) {
 	}
 	if got, want := value.String(), "Track (Original Mix)"; got != want {
 		t.Fatalf("SanitizedString = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizedStringDecodesJSONEscapes(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  string
+	}{
+		{`"Caf\u00e9"`, "Caf\u00e9"},
+		{"\"Caf\u00e9\"", "Caf\u00e9"},
+		{`"Quote \"Mix\""`, `Quote "Mix"`},
+		{`"Slash \/ Mix"`, "Slash / Mix"},
+		{`"One\nTwo\rThree\tFour"`, "One Two Three Four"},
+		{`"Literal \\n and \\t"`, `Literal \n and \t`},
+		{`"Literal \\u00e9"`, `Literal \u00e9`},
+		{`"Clef \ud834\udd1e"`, "Clef \U0001d11e"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			var got SanitizedString
+			if err := json.Unmarshal([]byte(tc.input), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.String() != tc.want {
+				t.Fatalf("decoded name = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSanitizedStringRejectsNonStringJSONWithoutChangingValue(t *testing.T) {
+	for _, input := range []string{`123`, `true`, `{}`, `[]`, `"bad\x"`} {
+		t.Run(input, func(t *testing.T) {
+			value := SanitizedString("Keep")
+			if err := json.Unmarshal([]byte(input), &value); err == nil {
+				t.Error("non-string or malformed JSON accepted")
+			}
+			if value != "Keep" {
+				t.Fatalf("failed decode changed value to %q", value)
+			}
+		})
+	}
+}
+
+func TestSanitizedStringNullPreservesExistingValue(t *testing.T) {
+	for _, previous := range []string{"", "Keep", " A  B \n"} {
+		value := SanitizedString(previous)
+		if err := json.Unmarshal([]byte(`null`), &value); err != nil || string(value) != previous {
+			t.Fatalf("JSON null = %q, %v; want unchanged value %q", value, err, previous)
+		}
 	}
 }
 
@@ -68,6 +119,44 @@ func TestSanitizePathUsesConfiguredWhitespace(t *testing.T) {
 
 	if got != want {
 		t.Fatalf("SanitizePath() = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizePathPreservesSafeWhitespaceReplacement(t *testing.T) {
+	for _, tc := range []struct{ replacement, want string }{
+		{"  ", "Deep  House  Mix"},
+		{"_  _", "Deep_  _House_  _Mix"},
+		{"\u00a0", "Deep\u00a0House\u00a0Mix"},
+	} {
+		if got := SanitizePath("Deep House Mix", tc.replacement); got != tc.want {
+			t.Errorf("replacement %q produced %q, want %q", tc.replacement, got, tc.want)
+		}
+	}
+}
+
+func TestWhitespaceReplacementCannotIntroducePathSyntax(t *testing.T) {
+	for _, replacement := range []string{`/../../`, `\..\..\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, "\x00", "\n", "\u0080"} {
+		t.Run(replacement, func(t *testing.T) {
+			component := SanitizePath("A B", replacement)
+			if strings.ContainsAny(component, "/\\<>:\"|?*\x00\n\r\t\u0080") {
+				t.Errorf("replacement introduced unsafe component %q", component)
+			}
+			base := t.TempDir()
+			rel, err := filepath.Rel(base, filepath.Join(base, component))
+			if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				t.Errorf("component escapes destination: %q, %v", rel, err)
+			}
+			directory := SanitizeDirectoryPath("Genre Name/Playlist Name", replacement)
+			if len(strings.Split(directory, "/")) != 2 || strings.Contains(directory, "\\") {
+				t.Errorf("replacement changed template hierarchy: %q", directory)
+			}
+		})
+	}
+}
+
+func TestWhitespaceReplacementCannotCreateReservedName(t *testing.T) {
+	if got := SanitizePath("CO N", "\x00"); got != "CON_" {
+		t.Fatalf("replacement created reserved filename %q, want CON_", got)
 	}
 }
 

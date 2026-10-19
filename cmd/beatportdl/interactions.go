@@ -138,7 +138,7 @@ func (app *application) search(input string) {
 			continue
 		}
 
-		if resultInt > releasesResultsLen+trackResultsLen || resultInt == 0 {
+		if resultInt > releasesResultsLen+trackResultsLen || resultInt < 1 {
 			fmt.Printf("invalid result number: %d\n", resultInt)
 			continue
 		}

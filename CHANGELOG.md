@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Reject negative search-result selections instead of panicking, while preserving valid track/release selections and their requested order.
+- Return validation errors for incomplete library and localized catalog URLs instead of indexing missing URL components.
+- Reject unsafe `whitespace_character` values from config files and CLI overrides. Sanitize substituted path components again so replacement text cannot introduce directory traversal, forbidden filename characters or reserved names; preserve intentional directory-template separators.
+- Decode JSON escapes in track/release names correctly, including Unicode, quotes, slashes and literal backslashes. Normalize decoded whitespace and reject invalid non-string values without changing the previous name. Existing identity-matched files keep their filenames when decoded names differ.
 - Refresh duplicate-detection indexes for each download run, record completed tracks immediately, and revalidate cached files after deletion or replacement. Filename corrections no longer cause repeat downloads within a run; file timestamp changes alone do not make a matching track different.
 - Reuse existing identity-matched files, including collision-suffixed names, before allocating a new filename. Preserve `track_exists` policies, audio-format separation and ownership of paths reserved by other active tracks.
 - Bound catalog authentication recovery to one refresh/replay, preserve replayed request bodies and final API errors, and close rejected responses before retrying.
@@ -19,6 +23,7 @@
 
 ### Added
 
+- Regression tests for invalid search selections, incomplete and supported URL routes, safe/unsafe whitespace replacements and overrides, JSON string decoding, and legacy-filename identity matching for FLAC/M4A.
 - Duplicate-detection regressions using real FLAC/M4A tags for completed downloads, fresh runs, removed/replaced files, timestamp-preserving tag edits, no-op updates, unchanged identities, collision suffixes, concurrent reservations and indexed tag-read counts.
 - Regression tests for persistent 401s, payload replay, concurrent auth/cache operations, response-body closure, cancellation, media timeouts, FFmpeg shutdown and collection-worker completion.
 - Regression tests with synthetic audio for failed and successful overwrites, partial-download and descriptor cleanup, malformed HLS data, invalid direct media, empty responses, long destination filenames, normal HLS output permissions, and direct downloads without FFmpeg.

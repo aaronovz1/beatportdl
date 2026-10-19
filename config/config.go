@@ -148,6 +148,9 @@ func Parse(filePath string, overrides ...func(*AppConfig)) (*AppConfig, error) {
 	if config.MaxGlobalWorkers <= 0 || config.MaxDownloadWorkers <= 0 {
 		return nil, fmt.Errorf("worker counts must be positive")
 	}
+	if !validator.SafePathReplacement(config.WhitespaceCharacter) {
+		return nil, fmt.Errorf("whitespace_character must not contain path separators, reserved filename characters, or control characters")
+	}
 
 	return &config, nil
 }

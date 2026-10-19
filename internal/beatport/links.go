@@ -60,6 +60,9 @@ func (b *Beatport) ParseUrl(inputURL string) (*Link, error) {
 		segmentsLength--
 
 		if segments[0] == "catalog" {
+			if segmentsLength < 2 {
+				return nil, ErrInvalidUrl
+			}
 			segments = segments[1:]
 			segmentsLength--
 		}
@@ -75,6 +78,9 @@ func (b *Beatport) ParseUrl(inputURL string) (*Link, error) {
 		idSegment = 2
 		link.Type = ReleaseLink
 	case "library":
+		if segmentsLength < 2 {
+			return nil, ErrInvalidUrl
+		}
 		switch segments[1] {
 		case "playlists", "playlist":
 			idSegment = 2

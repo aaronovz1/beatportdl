@@ -82,6 +82,8 @@ This will create a new `beatportdl-config.yml` file. You can put the following o
 If the Beatport credentials are correct, you should also see the file `beatportdl-credentials.json` appear in the BeatportDL directory.
 _If you accidentally entered an incorrect password and got an error, you can always manually edit the config file_
 
+`whitespace_character` replaces spaces inside each filename or directory component. An empty value keeps spaces; safe replacements such as `_` and `-` are supported. Path separators, Windows-reserved filename characters and control characters are rejected in config files and CLI overrides. Define folder hierarchy with `/` in the directory template instead.
+
 Download quality options for Beatport (availability depends on your active subscription tier and the track):
 
 | Option       | Description                                                                                                  | Requires at least              | Notes                                                                   |
@@ -99,6 +101,8 @@ Available `track_exists` options:
 - `update` Update tags
 
 Existing-file checks use embedded track IDs or ISRCs in the destination directory, separately for each audio format. Matching files keep their existing names, including collision suffixes. The index is rebuilt for each download run and updated as tracks finish; deleted or replaced cached files are rechecked. Changed timestamps alone do not cause a re-download when the embedded identity still matches. Files without identity tags retain filename-based matching across runs; files in other directories are not searched.
+
+API name escapes are decoded before naming and tagging. Existing identity-matched files keep their names even if an older version rendered an escape literally. Legacy files without identity tags may need renaming to match the corrected name before rerunning.
 
 Available template keywords for filenames and directories (`*_template`):
 
