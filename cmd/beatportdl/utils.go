@@ -27,13 +27,13 @@ import (
 const progressPrefixMaxWidth = 72
 
 func (app *application) globalWorker(fn func()) {
+	if !app.semAcquire(app.globalSem) {
+		return
+	}
 	app.wg.Add(1)
 
 	go func() {
 		defer app.wg.Done()
-		if !app.semAcquire(app.globalSem) {
-			return
-		}
 		defer app.semRelease(app.globalSem)
 		defer func() {
 			if err := recover(); err != nil {
@@ -45,13 +45,13 @@ func (app *application) globalWorker(fn func()) {
 }
 
 func (app *application) downloadWorker(wg *sync.WaitGroup, fn func()) {
+	if !app.semAcquire(app.downloadSem) {
+		return
+	}
 	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
-		if !app.semAcquire(app.downloadSem) {
-			return
-		}
 		defer app.semRelease(app.downloadSem)
 
 		defer func() {

@@ -80,7 +80,7 @@ func (app *application) getFirstTrackGenreFromChart(inst *beatport.Beatport, cha
 	return firstTrack.Genre.Name, nil
 }
 
-func (app *application) setupDownloadsDirectory(baseDir string, entity DownloadsDirectoryEntity) (string, error) {
+func (app *application) downloadsDirectory(baseDir string, entity DownloadsDirectoryEntity) string {
 	if app.config.SortByContext {
 		var subDir string
 		switch castedEntity := entity.(type) {
@@ -132,7 +132,11 @@ func (app *application) setupDownloadsDirectory(baseDir string, entity Downloads
 		}
 		baseDir = filepath.Join(baseDir, subDir)
 	}
-	return app.createDirectory(baseDir)
+	return baseDir
+}
+
+func (app *application) setupDownloadsDirectory(baseDir string, entity DownloadsDirectoryEntity) (string, error) {
+	return app.createDirectory(app.downloadsDirectory(baseDir, entity))
 }
 
 func (app *application) setupTrackDownloadsDirectory(baseDir string, track *beatport.Track) (string, error) {
@@ -153,8 +157,14 @@ func (app *application) setupDownloadsDirectoryWithFirstTrackGenre(baseDir strin
 		// Get the first track's genre based on entity type
 		switch entity.(type) {
 		case *beatport.Playlist:
+			if !strings.Contains(app.config.PlaylistDirectoryTemplate, "{first_genre}") {
+				return app.setupDownloadsDirectory(baseDir, entity)
+			}
 			firstGenre, err = app.getFirstTrackGenreFromPlaylist(inst, entityID)
 		case *beatport.Chart:
+			if !strings.Contains(app.config.ChartDirectoryTemplate, "{first_genre}") {
+				return app.setupDownloadsDirectory(baseDir, entity)
+			}
 			firstGenre, err = app.getFirstTrackGenreFromChart(inst, entityID)
 		default:
 			// Fall back to original behavior for other entity types
@@ -568,42 +578,14 @@ func (app *application) reserveTrackFilePath(directory, fileName, fileExtension 
 }
 
 func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track, directory string, quality string) (location string, downloaded bool, err error) {
-	var fileExtension string
-	var displayQuality string
-
-	var stream *beatport.TrackStream
-	var download *beatport.TrackDownload
-
-	switch app.config.Quality {
-	case "medium-hls":
-		trackStream, err := app.fetchTrackStream(inst, track.ID)
-		if err != nil {
-			return "", false, err
-		}
-		fileExtension = ".m4a"
-		displayQuality = "AAC 128kbps - HLS"
-		stream = trackStream
-	default:
-		trackDownload, err := app.fetchTrackDownload(inst, track.ID, quality)
-		if err != nil {
-			return "", false, err
-		}
-		switch trackDownload.StreamQuality {
-		case ".128k.aac.mp4":
-			fileExtension = ".m4a"
-			displayQuality = "AAC 128kbps"
-		case ".256k.aac.mp4":
-			fileExtension = ".m4a"
-			displayQuality = "AAC 256kbps"
-		case ".flac":
-			fileExtension = ".flac"
-			displayQuality = "FLAC"
-		default:
-			return "", false, fmt.Errorf("invalid stream quality: %s", trackDownload.StreamQuality)
-		}
-		download = trackDownload
+	media, err := app.fetchTrackMedia(inst, track.ID, quality)
+	if err != nil {
+		return "", false, err
 	}
+	return app.saveTrackMedia(track, directory, media)
+}
 
+func (app *application) saveTrackMedia(track *beatport.Track, directory string, media *trackMedia) (location string, downloaded bool, err error) {
 	fileName := track.Filename(
 		beatport.NamingPreferences{
 			Template:           app.config.TrackFileTemplate,
@@ -614,7 +596,7 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 			KeySystem:          app.config.KeySystem,
 		},
 	)
-	filePath, err := app.reserveTrackFilePath(directory, fileName, fileExtension, track.ID, track.ISRC)
+	filePath, err := app.reserveTrackFilePath(directory, fileName, media.extension, track.ID, track.ISRC)
 	if err != nil {
 		return "", false, err
 	}
@@ -627,19 +609,19 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 	}
 
 	var prefix string
-	infoDisplay := fmt.Sprintf("%s (%s) [%s]", track.Name.String(), track.MixName.String(), displayQuality)
+	infoDisplay := fmt.Sprintf("%s (%s) [%s]", track.Name.String(), track.MixName.String(), media.displayQuality)
 	if app.config.ShowProgress {
 		prefix = infoDisplay
 	} else {
 		fmt.Println("Downloading " + infoDisplay)
 	}
 
-	if download != nil {
-		if err := app.downloadFile(download.Location, filePath, prefix); err != nil {
+	if media.download != nil {
+		if err := app.downloadFile(media.download.Location, filePath, prefix); err != nil {
 			return "", false, err
 		}
-	} else if stream != nil {
-		segments, key, err := app.getStreamSegments(stream.Url)
+	} else if media.stream != nil {
+		segments, key, err := app.getStreamSegments(media.stream.Url)
 		if err != nil {
 			return "", false, fmt.Errorf("get stream segments: %w", err)
 		}
@@ -804,7 +786,15 @@ func (app *application) tagTrack(location string, track *beatport.Track, coverPa
 }
 
 func (app *application) handleTrack(inst *beatport.Beatport, track *beatport.Track, downloadsDir string, cover *trackCover) (bool, error) {
-	location, downloaded, err := app.saveTrack(inst, track, downloadsDir, app.config.Quality)
+	media, err := app.fetchTrackMedia(inst, track.ID, app.config.Quality)
+	if err != nil {
+		return false, fmt.Errorf("save track: %w", err)
+	}
+	return app.handleTrackMedia(track, downloadsDir, cover, media)
+}
+
+func (app *application) handleTrackMedia(track *beatport.Track, downloadsDir string, cover *trackCover, media *trackMedia) (bool, error) {
+	location, downloaded, err := app.saveTrackMedia(track, downloadsDir, media)
 	if err != nil {
 		return false, fmt.Errorf("save track: %w", err)
 	}
@@ -1008,50 +998,14 @@ func (app *application) handlePlaylistLink(inst *beatport.Beatport, link *beatpo
 	}
 
 	wg := sync.WaitGroup{}
+	var releases collectionReleases
+	defer releases.cleanup(app)
 	err = forPaginatedWorkers[beatport.PlaylistItem](&wg, link.ID, "", inst.GetPlaylistItems, func(item beatport.PlaylistItem, i int) error {
 		app.downloadWorker(&wg, func() {
-			trackStoreUrl := item.Track.StoreUrl()
-
-			release, err := inst.GetRelease(item.Track.Release.ID)
+			_, err := app.handleCollectionTrack(inst, &item.Track, downloadsDir, &releases)
 			if err != nil {
-				app.errorLogWrapper(trackStoreUrl, "fetch track release", err)
-				return
+				app.errorLogWrapper(item.Track.StoreUrl(), "handle track", err)
 			}
-			item.Track.Release = *release
-
-			trackDownloadsDir := downloadsDir
-			trackFull, err := inst.GetTrack(item.Track.ID)
-			if err != nil {
-				app.errorLogWrapper(trackStoreUrl, "fetch full track", err)
-				return
-			}
-			item.Track.Number = trackFull.Number
-			if app.config.SortByContext && app.config.ForceReleaseDirectories {
-				trackDownloadsDir, err = app.setupDownloadsDirectory(downloadsDir, release)
-				if err != nil {
-					app.errorLogWrapper(trackStoreUrl, "setup track release directory", err)
-					return
-				}
-			}
-
-			cover := newTrackCover(app, item.Track.Release.Image, trackDownloadsDir, app.requireCover(true, app.config.ForceReleaseDirectories))
-			defer cover.CleanupTemp()
-
-			processed, err := app.handleTrack(inst, &item.Track, trackDownloadsDir, cover)
-			if err != nil {
-				app.errorLogWrapper(trackStoreUrl, "handle track", err)
-				app.cleanup(trackDownloadsDir)
-				return
-			}
-
-			if app.config.ForceReleaseDirectories && processed {
-				if err := cover.Handle(); err != nil {
-					app.errorLogWrapper(trackStoreUrl, "handle track release cover file", err)
-					return
-				}
-			}
-
-			app.cleanup(trackDownloadsDir)
 		})
 		return nil
 	})
@@ -1075,57 +1029,22 @@ func (app *application) handleChartLink(inst *beatport.Beatport, link *beatport.
 		return
 	}
 	wg := sync.WaitGroup{}
+	var releases collectionReleases
+	defer releases.cleanup(app)
 	chartCover := newTrackCover(app, chart.Image, downloadsDir, app.requireCover(false, true))
 	defer chartCover.CleanupTemp()
 	var processedChartTrack atomic.Bool
 
 	err = forPaginatedWorkers[beatport.Track](&wg, link.ID, "", inst.GetChartTracks, func(track beatport.Track, i int) error {
 		app.downloadWorker(&wg, func() {
-			trackStoreUrl := track.StoreUrl()
-
-			release, err := inst.GetRelease(track.Release.ID)
-			if err != nil {
-				app.errorLogWrapper(trackStoreUrl, "fetch track release", err)
-				return
-			}
-			track.Release = *release
-
-			trackDownloadsDir := downloadsDir
-			trackFull, err := inst.GetTrack(track.ID)
-			if err != nil {
-				app.errorLogWrapper(trackStoreUrl, "fetch full track", err)
-				return
-			}
-			track.Number = trackFull.Number
-			if app.config.SortByContext && app.config.ForceReleaseDirectories {
-				trackDownloadsDir, err = app.setupDownloadsDirectory(downloadsDir, release)
-				if err != nil {
-					app.errorLogWrapper(trackStoreUrl, "setup track release directory", err)
-					return
-				}
-			}
-
-			cover := newTrackCover(app, track.Release.Image, trackDownloadsDir, app.requireCover(true, app.config.ForceReleaseDirectories))
-			defer cover.CleanupTemp()
-
-			processed, err := app.handleTrack(inst, &track, trackDownloadsDir, cover)
-			if err != nil {
-				app.errorLogWrapper(trackStoreUrl, "handle track", err)
-				app.cleanup(trackDownloadsDir)
-				return
-			}
+			processed, err := app.handleCollectionTrack(inst, &track, downloadsDir, &releases)
 			if processed {
 				processedChartTrack.Store(true)
 			}
-
-			if app.config.ForceReleaseDirectories && processed {
-				if err := cover.Handle(); err != nil {
-					app.errorLogWrapper(trackStoreUrl, "handle track release cover file", err)
-					return
-				}
+			if err != nil {
+				app.errorLogWrapper(track.StoreUrl(), "handle track", err)
+				return
 			}
-
-			app.cleanup(trackDownloadsDir)
 		})
 		return nil
 	})

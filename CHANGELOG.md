@@ -24,6 +24,7 @@
 
 ### Added
 
+- Request-count regressions and a no-op playlist benchmark, plus coverage for shared release metadata across pages, fresh-run retries, server-selected formats, denied access, HLS skipping, filename fallbacks, release/genre directory layouts, metadata-failure cleanup and independent chart covers. Add 10,000-job scheduling regressions for bounded goroutines, cancellation, worker joins and panic recovery.
 - Catalog response regressions for missing/null/invalid metadata, malformed pages and playlist items, valid empty pages, pagination/result preservation, HTTP errors, read failures and response-body closure across all catalog metadata getters.
 - Regression tests for invalid search selections, incomplete and supported URL routes, safe/unsafe whitespace replacements and overrides, JSON string decoding, and legacy-filename identity matching for FLAC/M4A.
 - Duplicate-detection regressions using real FLAC/M4A tags for completed downloads, fresh runs, removed/replaced files, timestamp-preserving tag edits, no-op updates, unchanged identities, collision suffixes, concurrent reservations and indexed tag-read counts.
@@ -37,6 +38,8 @@
 
 ### Changed
 
+- Reuse release metadata within each playlist/chart download. Under `track_exists: skip`, identity-matched files in the server-selected audio format skip additional release/full-track lookups where the destination is already known. Keep per-track subscription/access and format checks, filename fallback and full-track numbering; do not reuse media URLs across tracks or runs. Only fetch the first track's genre when a directory template uses `{first_genre}`. Defer directory cleanup until all sibling workers finish and preserve chart covers when release-cover requests fail.
+- Apply backpressure before spawning URL/download workers so large collections no longer create a waiting goroutine for every queued item. Worker limits, cancellation and error-path joins remain enforced.
 - Reject old Beatsource URLs and `@beatsource` queries with migration guidance instead of silently treating them as Beatport resources. Use migrated Beatport URLs; existing config, credentials, and downloaded files are left unchanged.
 - Restore live console logging at each interactive prompt so migration errors remain visible after a previous download's progress display has shut down. Add tests for Beatport-only requests and resource links, removed inputs, and repeat-prompt guidance.
 

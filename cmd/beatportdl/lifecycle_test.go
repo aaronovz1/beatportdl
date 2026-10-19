@@ -33,12 +33,16 @@ func TestQueuedWorkersExitOnCancellationWithoutTakingSlot(t *testing.T) {
 			app := &application{ctx: ctx, logWriter: io.Discard, downloadSem: sem, globalSem: sem}
 			var wg sync.WaitGroup
 			var ran atomic.Bool
-			if global {
-				app.globalWorker(func() { ran.Store(true) })
-			} else {
-				app.downloadWorker(&wg, func() { ran.Store(true) })
-			}
-			// Establish that the worker has passed startup and is waiting for a slot.
+			producerDone := make(chan struct{})
+			go func() {
+				defer close(producerDone)
+				if global {
+					app.globalWorker(func() { ran.Store(true) })
+				} else {
+					app.downloadWorker(&wg, func() { ran.Store(true) })
+				}
+			}()
+			// Establish that submission is waiting for a slot.
 			deadline := time.Now().Add(3 * time.Second)
 			blocked := false
 			for time.Now().Before(deadline) {
@@ -51,7 +55,7 @@ func TestQueuedWorkersExitOnCancellationWithoutTakingSlot(t *testing.T) {
 				runtime.Gosched()
 			}
 			done := make(chan struct{})
-			go func() { wg.Wait(); app.wg.Wait(); close(done) }()
+			go func() { <-producerDone; wg.Wait(); app.wg.Wait(); close(done) }()
 			cancel()
 			select {
 			case <-done:

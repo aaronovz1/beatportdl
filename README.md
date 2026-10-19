@@ -185,6 +185,8 @@ Media requests wait up to 40 seconds for response headers and up to 30 minutes o
 
 An `invalid API response` error means a catalog response was incomplete or malformed; it is not treated as an empty playlist or a valid resource. Valid empty results remain supported, and completed tracks are kept.
 
+Playlist/chart updates share release metadata within each collection. With `track_exists: skip`, identity-matched files avoid extra metadata lookups, but BeatportDL still checks access and the server-selected audio format for each track. Worker limits apply before new goroutines are started, keeping queued work bounded on large collections.
+
 Run BeatportDL and enter a Beatport URL or search query:
 
 ```shell
