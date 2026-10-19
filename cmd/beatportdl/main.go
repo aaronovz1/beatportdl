@@ -8,6 +8,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/vbauerster/mpb/v8"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -32,6 +33,7 @@ type application struct {
 	downloadSem chan struct{}
 	globalSem   chan struct{}
 	pbp         *mpb.Progress
+	mediaClient *http.Client
 
 	urls                  []string
 	activeFiles           map[string]int64
@@ -76,7 +78,7 @@ func main() {
 		<-sigCh
 
 		if len(app.urls) > 0 {
-			app.LogInfo("Shutdown signal received. Waiting for download workers to finish")
+			app.LogInfo("Shutdown signal received. Cancelling downloads and waiting for workers to stop")
 			cancel()
 
 			<-sigCh
@@ -100,7 +102,7 @@ func main() {
 	}
 
 	auth := beatport.NewAuth(cfg.Username, cfg.Password, cachePath)
-	bp := beatport.New(cfg.Proxy, auth)
+	bp := beatport.New(cfg.Proxy, auth).WithContext(ctx)
 
 	if err := auth.LoadCache(); err != nil {
 		if err := auth.Init(bp); err != nil {

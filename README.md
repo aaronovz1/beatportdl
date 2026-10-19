@@ -173,6 +173,10 @@ Proxy URL format example: `http://username:password@127.0.0.1:8080`
 
 ## Usage
 
+During a download, the first `Ctrl+C` cancels queued work, active HTTP transfers and FFmpeg operations, then waits for workers to stop and clean their temporary files. A second shutdown signal forces an immediate exit and may leave temporary files behind. Completed tracks are kept.
+
+Media requests wait up to 40 seconds for response headers and up to 30 minutes overall per request, allowing large audio downloads more time than catalog requests. Authentication recovery retries a rejected catalog request once after refreshing the token, then reports a persistent authorization error.
+
 Run BeatportDL and enter a Beatport URL or search query:
 
 ```shell

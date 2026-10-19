@@ -1,11 +1,13 @@
 package beatport
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -27,11 +29,19 @@ var (
 )
 
 type Auth struct {
-	username  string
-	password  string
-	tokenPair *tokenPair
-	cacheFile string
-	mutex     sync.RWMutex
+	username    string
+	password    string
+	tokenPair   *tokenPair
+	cacheFile   string
+	mutex       sync.RWMutex
+	refreshOnce sync.Once
+	refreshGate chan struct{}
+	lastRenewal *authRenewalResult
+}
+
+type authRenewalResult struct {
+	err      error
+	canceled bool
 }
 
 type tokenPair struct {
@@ -53,6 +63,11 @@ func NewAuth(username, password, cacheFile string) *Auth {
 }
 
 func (a *Auth) LoadCache() error {
+	if err := a.lockRefresh(context.Background()); err != nil {
+		return err
+	}
+	defer a.unlockRefresh()
+
 	data, err := os.ReadFile(a.cacheFile)
 	if err != nil {
 		return fmt.Errorf("failed to read token file: %w", err)
@@ -66,14 +81,30 @@ func (a *Auth) LoadCache() error {
 	if loadedToken.LoginID != a.loginId() {
 		return ErrLoginIDMismatch
 	}
+	if loadedToken.AccessToken == "" {
+		return errors.New("cached token has no access token")
+	}
 
+	a.mutex.Lock()
 	a.tokenPair = &loadedToken
+	a.mutex.Unlock()
 
 	return nil
 }
 
 func (a *Auth) WriteCache() error {
-	data, err := json.MarshalIndent(a.tokenPair, "", " ")
+	if err := a.lockRefresh(context.Background()); err != nil {
+		return err
+	}
+	defer a.unlockRefresh()
+	return a.writeCache(a.snapshot())
+}
+
+func (a *Auth) writeCache(token *tokenPair) error {
+	if token == nil {
+		return errors.New("no token to cache")
+	}
+	data, err := json.MarshalIndent(token, "", " ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal tokenPair: %w", err)
 	}
@@ -91,50 +122,174 @@ func (a *Auth) WriteCache() error {
 }
 
 func (a *Auth) Check(inst *Beatport) error {
-	currentTime := time.Now().Unix()
+	if a == nil {
+		return errors.New("missing authentication")
+	}
+	if err := inst.requestContext().Err(); err != nil {
+		return err
+	}
+	previous := a.renewalSnapshot()
+	if !tokenExpired(a.snapshot()) {
+		return nil
+	}
+
+	if err := a.lockRefresh(inst.requestContext()); err != nil {
+		return err
+	}
+	defer a.unlockRefresh()
+	if err := inst.requestContext().Err(); err != nil {
+		return err
+	}
+	if !tokenExpired(a.snapshot()) {
+		return inst.requestContext().Err()
+	}
+	if result := a.sharedRenewalResult(previous); result != nil {
+		return result.err
+	}
+	return a.renew(inst)
+}
+
+// Token pairs are immutable after publication, so readers can use a snapshot
+// without holding the token mutex across nested authentication requests.
+func (a *Auth) snapshot() *tokenPair {
+	if a == nil {
+		return nil
+	}
 	a.mutex.RLock()
-	tokenExpirationTime := a.tokenPair.IssuedAt + a.tokenPair.ExpiresIn
-	a.mutex.RUnlock()
-	if currentTime+300 >= tokenExpirationTime {
-		a.mutex.Lock()
-		fmt.Println("Refreshing token")
-		if _, err := a.refresh(inst); err != nil {
-			if err = a.Init(inst); err != nil {
-				a.mutex.Unlock()
-				return fmt.Errorf("invalid token and authorization error: %w", err)
-			}
+	defer a.mutex.RUnlock()
+	return a.tokenPair
+}
+
+func tokenExpired(token *tokenPair) bool {
+	return token == nil || token.AccessToken == "" || time.Now().Unix()+300 >= token.IssuedAt+token.ExpiresIn
+}
+
+func (a *Auth) renewalSnapshot() *authRenewalResult {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	return a.lastRenewal
+}
+
+func (a *Auth) sharedRenewalResult(previous *authRenewalResult) *authRenewalResult {
+	current := a.renewalSnapshot()
+	if current != nil && current != previous && current.err != nil && !current.canceled {
+		return current
+	}
+	return nil
+}
+
+func (a *Auth) recoverUnauthorized(inst *Beatport, rejected *tokenPair) error {
+	previous := a.renewalSnapshot()
+	if err := a.lockRefresh(inst.requestContext()); err != nil {
+		return err
+	}
+	defer a.unlockRefresh()
+	if err := inst.requestContext().Err(); err != nil {
+		return err
+	}
+	if current := a.snapshot(); current != rejected && !tokenExpired(current) {
+		return nil
+	}
+	if result := a.sharedRenewalResult(previous); result != nil {
+		return result.err
+	}
+	return a.renew(inst)
+}
+
+// The gate serializes recovery and cache writes without making canceled clients
+// wait for another client's network requests. It also supports zero-value Auth.
+func (a *Auth) lockRefresh(ctx context.Context) error {
+	a.refreshOnce.Do(func() { a.refreshGate = make(chan struct{}, 1) })
+	select {
+	case a.refreshGate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			a.unlockRefresh()
+			return err
 		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (a *Auth) unlockRefresh() {
+	<-a.refreshGate
+}
+
+// Callers hold the refresh gate, never the token mutex, across network recovery.
+func (a *Auth) renew(inst *Beatport) (err error) {
+	// Record each flight so waiters can share failures, not another caller's cancellation.
+	defer func() {
+		result := &authRenewalResult{err: err, canceled: inst.requestContext().Err() != nil}
+		a.mutex.Lock()
+		a.lastRenewal = result
 		a.mutex.Unlock()
+	}()
+	if err := inst.requestContext().Err(); err != nil {
+		return err
+	}
+	if token := a.snapshot(); token != nil && token.RefreshToken != "" {
+		fmt.Println("Refreshing token")
+		if _, err := a.refresh(inst); err == nil {
+			return nil
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+	}
+	if err := a.init(inst); err != nil {
+		return fmt.Errorf("invalid token and authorization error: %w", err)
 	}
 	return nil
 }
 
 func (a *Auth) Invalidate() {
+	if a == nil {
+		return
+	}
 	a.mutex.Lock()
-	a.tokenPair.IssuedAt = 0
-	a.mutex.Unlock()
+	defer a.mutex.Unlock()
+	if a.tokenPair != nil {
+		token := *a.tokenPair
+		token.IssuedAt = 0
+		a.tokenPair = &token
+	}
 }
 
 func (a *Auth) Init(inst *Beatport) error {
+	if err := a.lockRefresh(inst.requestContext()); err != nil {
+		return err
+	}
+	defer a.unlockRefresh()
+	return a.init(inst)
+}
+
+func (a *Auth) init(inst *Beatport) error {
+	if err := inst.requestContext().Err(); err != nil {
+		return err
+	}
 	fmt.Println("Logging in")
 	sessionId, err := a.login(inst)
 	if err != nil {
-		return fmt.Errorf("login: %v", err)
+		return fmt.Errorf("login: %w", err)
 	}
 	authorizationCode, err := a.authorize(inst, sessionId)
 	if err != nil {
-		return fmt.Errorf("authorize: %v", err)
+		return fmt.Errorf("authorize: %w", err)
 	}
 	if err := a.issue(inst, authorizationCode); err != nil {
-		return fmt.Errorf("issue token: %v", err)
+		return fmt.Errorf("issue token: %w", err)
 	}
 	return nil
 }
 
 func (a *Auth) refresh(inst *Beatport) (*tokenPair, error) {
+	token := a.snapshot()
+	if token == nil || token.RefreshToken == "" {
+		return nil, errors.New("no refresh token")
+	}
 	payload := map[string]string{
 		"client_id":     clientId,
-		"refresh_token": a.tokenPair.RefreshToken,
+		"refresh_token": token.RefreshToken,
 		"grant_type":    "refresh_token",
 	}
 
@@ -147,11 +302,15 @@ func (a *Auth) refresh(inst *Beatport) (*tokenPair, error) {
 	if err = json.NewDecoder(res.Body).Decode(response); err != nil {
 		return nil, err
 	}
-	loginId := a.tokenPair.LoginID
+	if response.AccessToken == "" {
+		return nil, errors.New("token response has no access token")
+	}
+	response.IssuedAt = time.Now().Unix()
+	response.LoginID = token.LoginID
+	a.mutex.Lock()
 	a.tokenPair = response
-	a.tokenPair.IssuedAt = time.Now().Unix()
-	a.tokenPair.LoginID = loginId
-	if err = a.WriteCache(); err != nil {
+	a.mutex.Unlock()
+	if err = a.writeCache(response); err != nil {
 		return nil, err
 	}
 
@@ -181,10 +340,15 @@ func (a *Auth) issue(inst *Beatport, code string) error {
 	if err = json.NewDecoder(res.Body).Decode(response); err != nil {
 		return err
 	}
+	if response.AccessToken == "" {
+		return errors.New("token response has no access token")
+	}
+	response.IssuedAt = time.Now().Unix()
+	response.LoginID = a.loginId()
+	a.mutex.Lock()
 	a.tokenPair = response
-	a.tokenPair.IssuedAt = time.Now().Unix()
-	a.tokenPair.LoginID = a.loginId()
-	err = a.WriteCache()
+	a.mutex.Unlock()
+	err = a.writeCache(response)
 	if err != nil {
 		return err
 	}
@@ -193,12 +357,13 @@ func (a *Auth) issue(inst *Beatport, code string) error {
 }
 
 func (a *Auth) authorize(inst *Beatport, sessionId string) (string, error) {
-	inst.headers["cookie"] = fmt.Sprintf("sessionid=%s", sessionId)
-	res, err := inst.fetch("GET", authEndpoint, nil, "")
-	delete(inst.headers, "cookie")
+	headers := http.Header{}
+	headers.Set("Cookie", fmt.Sprintf("sessionid=%s", sessionId))
+	res, err := inst.fetchWithHeaders("GET", authEndpoint, nil, "", headers)
 	if err != nil {
 		return "", err
 	}
+	defer res.Body.Close()
 
 	redirectUrl := res.Header.Get("Location")
 	parsedUrl, err := url.Parse(redirectUrl)
@@ -225,6 +390,7 @@ func (a *Auth) login(inst *Beatport) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer res.Body.Close()
 	cookies := res.Cookies()
 	for _, cookie := range cookies {
 		if cookie.Name == "sessionid" {

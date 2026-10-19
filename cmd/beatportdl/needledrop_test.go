@@ -57,7 +57,7 @@ func TestDownloadSegmentsClosesBodyBeforeNextRequest(t *testing.T) {
 		}, nil
 	})}
 
-	app := &application{}
+	app := &application{mediaClient: http.DefaultClient}
 	path, err := app.downloadSegments(t.TempDir(), []string{"https://example.test/1", "https://example.test/2"}, key, "")
 	if err != nil {
 		t.Fatalf("downloadSegments(): %v", err)
@@ -87,7 +87,8 @@ segment.ts
 	}))
 	defer server.Close()
 
-	segments, key, err := getStreamSegments(server.URL + "/playlist.m3u8")
+	app := &application{}
+	segments, key, err := app.getStreamSegments(server.URL + "/playlist.m3u8")
 	if err == nil {
 		t.Fatal("getStreamSegments() error = nil, want missing key error")
 	}

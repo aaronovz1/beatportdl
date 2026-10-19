@@ -26,7 +26,7 @@ func (app *application) handleCatalogTracks(inst *beatport.Beatport, link *beatp
 	var wg sync.WaitGroup
 	var releasesMutex sync.Mutex
 	releases := make(map[int64]*catalogRelease)
-	err := ForPaginated[beatport.Track](link.ID, link.Params, source.fetchPage, func(track beatport.Track, _ int) error {
+	err := forPaginatedWorkers[beatport.Track](&wg, link.ID, link.Params, source.fetchPage, func(track beatport.Track, _ int) error {
 		app.downloadWorker(&wg, func() {
 			trackURL := track.StoreUrl()
 			fullTrack, err := source.fetchTrack(track.ID)
@@ -76,8 +76,6 @@ func (app *application) handleCatalogTracks(inst *beatport.Beatport, link *beatp
 		return nil
 	})
 
-	// Pagination can fail while workers still use shared covers and directories.
-	wg.Wait()
 	for _, state := range releases {
 		if releaseDirectories && state.processed.Load() {
 			if err := state.cover.Handle(); err != nil {

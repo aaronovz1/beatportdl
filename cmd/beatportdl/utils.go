@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unspok3n/beatportdl/internal/taglib"
 
 	"github.com/fatih/color"
@@ -28,8 +30,10 @@ func (app *application) globalWorker(fn func()) {
 	app.wg.Add(1)
 
 	go func() {
-		app.semAcquire(app.globalSem)
 		defer app.wg.Done()
+		if !app.semAcquire(app.globalSem) {
+			return
+		}
 		defer app.semRelease(app.globalSem)
 		defer func() {
 			if err := recover(); err != nil {
@@ -45,13 +49,9 @@ func (app *application) downloadWorker(wg *sync.WaitGroup, fn func()) {
 
 	go func() {
 		defer wg.Done()
-		select {
-		case <-app.ctx.Done():
+		if !app.semAcquire(app.downloadSem) {
 			return
-		default:
 		}
-
-		app.semAcquire(app.downloadSem)
 		defer app.semRelease(app.downloadSem)
 
 		defer func() {
@@ -75,8 +75,28 @@ func (app *application) logWorkerPanic(worker string, recovered interface{}) {
 	}
 }
 
-func (app *application) semAcquire(s chan struct{}) {
-	s <- struct{}{}
+func (app *application) context() context.Context {
+	if app.ctx != nil {
+		return app.ctx
+	}
+	return context.Background()
+}
+
+func (app *application) semAcquire(s chan struct{}) bool {
+	ctx := app.context()
+	if ctx.Err() != nil {
+		return false
+	}
+	select {
+	case s <- struct{}{}:
+		if ctx.Err() != nil {
+			app.semRelease(s)
+			return false
+		}
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (app *application) semRelease(s chan struct{}) {
@@ -84,6 +104,9 @@ func (app *application) semRelease(s chan struct{}) {
 }
 
 func (app *application) downloadFile(url string, destination string, pbPrefix string) error {
+	if err := app.context().Err(); err != nil {
+		return err
+	}
 	extension := strings.ToLower(filepath.Ext(destination))
 	isAudio := extension == ".flac" || extension == ".m4a"
 	if !isAudio {
@@ -102,7 +125,7 @@ func (app *application) downloadFile(url string, destination string, pbPrefix st
 		}
 	}()
 
-	resp, err := http.Get(url)
+	resp, err := app.getMedia(url)
 	if err != nil {
 		return fmt.Errorf("download file: %w", err)
 	}
@@ -148,11 +171,39 @@ func (app *application) downloadFile(url string, destination string, pbPrefix st
 			return fmt.Errorf("validate downloaded audio: %w", err)
 		}
 	}
+	if err := app.context().Err(); err != nil {
+		return err
+	}
 	if err := os.Rename(tempPath, destination); err != nil {
 		return fmt.Errorf("move file into place: %w", err)
 	}
 	keepTemp = true
 	return nil
+}
+
+const (
+	mediaRequestTimeout        = 30 * time.Minute
+	mediaResponseHeaderTimeout = 40 * time.Second
+)
+
+var defaultMediaClient = newMediaClient()
+
+func newMediaClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = mediaResponseHeaderTimeout
+	return &http.Client{Transport: transport, Timeout: mediaRequestTimeout}
+}
+
+func (app *application) getMedia(url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(app.context(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	client := app.mediaClient
+	if client == nil {
+		client = defaultMediaClient
+	}
+	return client.Do(req)
 }
 
 func validateAudioFile(path string) error {

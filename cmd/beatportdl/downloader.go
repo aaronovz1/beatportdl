@@ -584,17 +584,17 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 			return "", err
 		}
 	} else if stream != nil {
-		segments, key, err := getStreamSegments(stream.Url)
+		segments, key, err := app.getStreamSegments(stream.Url)
 		if err != nil {
-			return "", fmt.Errorf("get stream segments: %v", err)
+			return "", fmt.Errorf("get stream segments: %w", err)
 		}
 		segmentsFile, err := app.downloadSegments(directory, *segments, *key, prefix)
 		if err != nil {
-			return "", fmt.Errorf("download segments: %v", err)
+			return "", fmt.Errorf("download segments: %w", err)
 		}
 		defer os.Remove(segmentsFile)
-		if err := remuxToM4A(segmentsFile, filePath); err != nil {
-			return "", fmt.Errorf("remux to m4a: %v", err)
+		if err := remuxToM4AContext(app.context(), segmentsFile, filePath); err != nil {
+			return "", fmt.Errorf("remux to m4a: %w", err)
 		}
 	}
 
@@ -751,7 +751,7 @@ func (app *application) tagTrack(location string, track *beatport.Track, coverPa
 func (app *application) handleTrack(inst *beatport.Beatport, track *beatport.Track, downloadsDir string, cover *trackCover) (bool, error) {
 	location, err := app.saveTrack(inst, track, downloadsDir, app.config.Quality)
 	if err != nil {
-		return false, fmt.Errorf("save track: %v", err)
+		return false, fmt.Errorf("save track: %w", err)
 	}
 	if location == "" {
 		return false, nil
@@ -761,12 +761,12 @@ func (app *application) handleTrack(inst *beatport.Beatport, track *beatport.Tra
 	if app.trackTagsNeedCover(location) {
 		coverPath, err = cover.Path()
 		if err != nil {
-			return false, fmt.Errorf("download cover: %v", err)
+			return false, fmt.Errorf("download cover: %w", err)
 		}
 	}
 
 	if err = app.tagTrack(location, track, coverPath); err != nil {
-		return false, fmt.Errorf("tag track: %v", err)
+		return false, fmt.Errorf("tag track: %w", err)
 	}
 	return true, nil
 }
@@ -777,12 +777,15 @@ func (app *application) cleanup(downloadsDir string) {
 	}
 }
 
-func ForPaginated[T any](
+func forPaginatedWorkers[T any](
+	workers *sync.WaitGroup,
 	entityId int64,
 	params string,
 	fetchPage func(id int64, page int, params string) (results *beatport.Paginated[T], err error),
 	processItem func(item T, i int) error,
 ) error {
+	// Pagination owns queued workers until every return path has joined them.
+	defer workers.Wait()
 	page := 1
 	for {
 		paginated, err := fetchPage(entityId, page, params)
@@ -947,7 +950,7 @@ func (app *application) handlePlaylistLink(inst *beatport.Beatport, link *beatpo
 	}
 
 	wg := sync.WaitGroup{}
-	err = ForPaginated[beatport.PlaylistItem](link.ID, "", inst.GetPlaylistItems, func(item beatport.PlaylistItem, i int) error {
+	err = forPaginatedWorkers[beatport.PlaylistItem](&wg, link.ID, "", inst.GetPlaylistItems, func(item beatport.PlaylistItem, i int) error {
 		app.downloadWorker(&wg, func() {
 			trackStoreUrl := item.Track.StoreUrl()
 
@@ -999,8 +1002,6 @@ func (app *application) handlePlaylistLink(inst *beatport.Beatport, link *beatpo
 		app.errorLogWrapper(link.Original, "handle playlist items", err)
 		return
 	}
-
-	wg.Wait()
 }
 
 func (app *application) handleChartLink(inst *beatport.Beatport, link *beatport.Link) {
@@ -1020,7 +1021,7 @@ func (app *application) handleChartLink(inst *beatport.Beatport, link *beatport.
 	defer chartCover.CleanupTemp()
 	var processedChartTrack atomic.Bool
 
-	err = ForPaginated[beatport.Track](link.ID, "", inst.GetChartTracks, func(track beatport.Track, i int) error {
+	err = forPaginatedWorkers[beatport.Track](&wg, link.ID, "", inst.GetChartTracks, func(track beatport.Track, i int) error {
 		app.downloadWorker(&wg, func() {
 			trackStoreUrl := track.StoreUrl()
 
@@ -1075,8 +1076,6 @@ func (app *application) handleChartLink(inst *beatport.Beatport, link *beatport.
 		app.errorLogWrapper(link.Original, "handle playlist items", err)
 		return
 	}
-
-	wg.Wait()
 
 	if processedChartTrack.Load() {
 		if err := chartCover.Handle(); err != nil {

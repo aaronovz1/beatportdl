@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/hex"
@@ -24,8 +25,8 @@ type StreamKey struct {
 	IV    []byte
 }
 
-func getStreamSegments(stream string) (*[]string, *StreamKey, error) {
-	resp, err := http.Get(stream)
+func (app *application) getStreamSegments(stream string) (*[]string, *StreamKey, error) {
+	resp, err := app.getMedia(stream)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -62,7 +63,7 @@ func getStreamSegments(stream string) (*[]string, *StreamKey, error) {
 			if segment.Key.IV == "" {
 				return nil, nil, fmt.Errorf("stream segment %d is missing an encryption key IV", i)
 			}
-			req, err := http.Get(base + segment.Key.URI)
+			req, err := app.getMedia(base + segment.Key.URI)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -72,7 +73,7 @@ func getStreamSegments(stream string) (*[]string, *StreamKey, error) {
 			}
 			keyBytes, err := io.ReadAll(req.Body)
 			if err != nil {
-				return nil, nil, fmt.Errorf("read stream key: %v", err)
+				return nil, nil, fmt.Errorf("read stream key: %w", err)
 			}
 			ivBytes, err := hex.DecodeString(strings.TrimPrefix(segment.Key.IV, "0x"))
 			if err != nil {
@@ -114,6 +115,9 @@ func decryptSegment(segment []byte, key StreamKey) ([]byte, error) {
 }
 
 func (app *application) downloadSegments(directory string, segmentUrls []string, key StreamKey, pbPrefix string) (string, error) {
+	if err := app.context().Err(); err != nil {
+		return "", err
+	}
 	if len(segmentUrls) == 0 {
 		return "", errors.New("stream has no segments")
 	}
@@ -141,7 +145,7 @@ func (app *application) downloadSegments(directory string, segmentUrls []string,
 	var written int64
 	for _, segmentUrl := range segmentUrls {
 		if err := func() error {
-			resp, err := http.Get(segmentUrl)
+			resp, err := app.getMedia(segmentUrl)
 			if err != nil {
 				return err
 			}
@@ -174,11 +178,21 @@ func (app *application) downloadSegments(directory string, segmentUrls []string,
 	if err != nil {
 		return "", err
 	}
+	if err := app.context().Err(); err != nil {
+		return "", err
+	}
 	keepTemp = true
 	return tempPath, nil
 }
 
 func remuxToM4A(input, output string) error {
+	return remuxToM4AContext(context.Background(), input, output)
+}
+
+func remuxToM4AContext(ctx context.Context, input, output string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	tempFile, err := os.CreateTemp(filepath.Dir(output), ".beatportdl-remux-*.m4a")
 	if err != nil {
 		return fmt.Errorf("create temp output: %w", err)
@@ -196,7 +210,7 @@ func remuxToM4A(input, output string) error {
 		}
 	}()
 
-	cmd := exec.Command("ffmpeg",
+	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-y",
 		"-i", input,
 		"-map_metadata", "-1",
@@ -204,6 +218,9 @@ func remuxToM4A(input, output string) error {
 		tempOutput,
 	)
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("ffmpeg: %w", err)
 	}
 	info, err := os.Stat(tempOutput)
@@ -213,8 +230,11 @@ func remuxToM4A(input, output string) error {
 	if info.Size() == 0 {
 		return errors.New("remuxed m4a is empty")
 	}
-	if err := validateM4A(tempOutput); err != nil {
+	if err := validateM4AContext(ctx, tempOutput); err != nil {
 		return fmt.Errorf("validate remuxed m4a: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := os.Rename(tempOutput, output); err != nil {
 		return fmt.Errorf("move remuxed m4a into place: %w", err)
@@ -224,8 +244,15 @@ func remuxToM4A(input, output string) error {
 }
 
 func validateM4A(path string) error {
-	cmd := exec.Command("ffmpeg", "-v", "error", "-i", path, "-f", "null", "-")
+	return validateM4AContext(context.Background(), path)
+}
+
+func validateM4AContext(ctx context.Context, path string) error {
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-v", "error", "-i", path, "-f", "null", "-")
 	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	message := strings.TrimSpace(string(output))
 	if err != nil {
 		if message == "" {

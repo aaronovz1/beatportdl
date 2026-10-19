@@ -29,7 +29,7 @@ func TestDownloadSegmentsClosesFileOnFailure(t *testing.T) {
 		staged = info.Sys().(*syscall.Stat_t)
 		return nil, errors.New("synthetic network failure")
 	})}
-	app := &application{}
+	app := &application{mediaClient: http.DefaultClient}
 	if got, err := app.downloadSegments(dir, []string{"https://example.test/segment"}, StreamKey{}, ""); got != "" || err == nil {
 		t.Fatalf("downloadSegments() = %q, %v; want empty path and error", got, err)
 	}

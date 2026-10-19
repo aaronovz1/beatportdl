@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Bound catalog authentication recovery to one refresh/replay, preserve replayed request bodies and final API errors, and close rejected responses before retrying.
+- Synchronize token snapshots, serialize refresh/login without blocking cancelled waiters, reuse concurrent refreshes, keep authorization cookies request-local, and close login/authorization responses.
+- Join playlist, chart and catalog download workers before returning on pagination or processing errors, preventing premature progress shutdown and cover cleanup.
+- Cancel queued workers, in-flight API/media requests, retry waits and FFmpeg operations on shutdown. Clean interrupted staging files without replacing existing tracks; bound media response headers to 40 seconds and allow up to 30 minutes for each media transfer.
 - Fix Dockerized Windows cross-builds by using Zig's target-aware archive tools for TagLib and zlib. Host archive tools could omit the Windows symbol indexes and cause unresolved TagLib symbols at link time. Add a Windows Docker build and runtime-DLL check to CI.
 - Preserve existing audio files when an overwrite download or HLS remux fails. Only completed transfers replace the destination.
 - Close and remove partial HLS staging files after failures instead of leaving UUID-named files in download directories.
@@ -13,6 +17,7 @@
 
 ### Added
 
+- Regression tests for persistent 401s, payload replay, concurrent auth/cache operations, response-body closure, cancellation, media timeouts, FFmpeg shutdown and collection-worker completion.
 - Regression tests with synthetic audio for failed and successful overwrites, partial-download and descriptor cleanup, malformed HLS data, invalid direct media, empty responses, long destination filenames, normal HLS output permissions, and direct downloads without FFmpeg.
 
 ### Removed

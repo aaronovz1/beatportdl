@@ -23,6 +23,7 @@ type Beatport struct {
 	client  *http.Client
 	headers map[string]string
 	auth    *Auth
+	ctx     context.Context
 }
 
 type FetcherError struct {
@@ -123,6 +124,7 @@ func New(proxyUrl string, auth *Auth) *Beatport {
 	}
 	f := Beatport{
 		auth: auth,
+		ctx:  context.Background(),
 		client: &http.Client{
 			Timeout:   time.Duration(40) * time.Second,
 			Transport: transport,
@@ -135,10 +137,36 @@ func New(proxyUrl string, auth *Auth) *Beatport {
 	return &f
 }
 
-func (b *Beatport) fetch(method, endpoint string, payload interface{}, contentType string) (*http.Response, error) {
-	var body bytes.Buffer
+// WithContext returns a shallow copy sharing the HTTP client and authentication
+// state, with ctx applied to all requests and authentication recovery.
+func (b *Beatport) WithContext(ctx context.Context) *Beatport {
+	if ctx == nil {
+		panic("nil context")
+	}
+	copy := *b
+	copy.ctx = ctx
+	return &copy
+}
 
-	if endpoint != tokenEndpoint && endpoint != authEndpoint && endpoint != loginEndpoint {
+func (b *Beatport) requestContext() context.Context {
+	if b.ctx != nil {
+		return b.ctx
+	}
+	return context.Background()
+}
+
+func (b *Beatport) fetch(method, endpoint string, payload interface{}, contentType string) (*http.Response, error) {
+	return b.fetchWithHeaders(method, endpoint, payload, contentType, nil)
+}
+
+func (b *Beatport) fetchWithHeaders(method, endpoint string, payload interface{}, contentType string, headers http.Header) (*http.Response, error) {
+	var body bytes.Buffer
+	isAuthRequest := endpoint == tokenEndpoint || endpoint == authEndpoint || endpoint == loginEndpoint
+	if err := b.requestContext().Err(); err != nil {
+		return nil, err
+	}
+
+	if !isAuthRequest {
 		if err := b.auth.Check(b); err != nil {
 			return nil, err
 		}
@@ -161,32 +189,42 @@ func (b *Beatport) fetch(method, endpoint string, payload interface{}, contentTy
 		}
 	}
 
-	req, err := http.NewRequest(method, beatportBaseUrl+endpoint, &body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(b.requestContext(), method, beatportBaseUrl+endpoint, bytes.NewReader(body.Bytes()))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
 
-	for key, value := range b.headers {
-		req.Header.Add(key, value)
-	}
+		for key, value := range b.headers {
+			req.Header.Add(key, value)
+		}
+		for key, values := range headers {
+			req.Header[key] = append([]string(nil), values...)
+		}
 
-	if payload != nil {
-		req.Header.Set("Content-Type", contentType)
-	}
+		if payload != nil {
+			req.Header.Set("Content-Type", contentType)
+		}
 
-	if b.auth.tokenPair != nil {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", b.auth.tokenPair.AccessToken))
-	}
+		token := b.auth.snapshot()
+		if token != nil {
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
+		}
 
-	resp, err := b.doRequest(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
+		resp, err := b.doRequest(req)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusFound {
-		if resp.StatusCode == http.StatusUnauthorized && endpoint != tokenEndpoint && endpoint != authEndpoint && endpoint != loginEndpoint {
-			b.auth.Invalidate()
-			return b.fetch(method, endpoint, payload, contentType)
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusFound {
+			return resp, nil
+		}
+		if resp.StatusCode == http.StatusUnauthorized && !isAuthRequest && attempt == 0 {
+			resp.Body.Close()
+			if err := b.auth.recoverUnauthorized(b, token); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		defer resp.Body.Close()
 		response := &FetcherError{}
@@ -208,12 +246,13 @@ func (b *Beatport) fetch(method, endpoint string, payload interface{}, contentTy
 			Endpoint:   endpoint,
 		}
 	}
-
-	return resp, nil
 }
 
 func (b *Beatport) doRequest(req *http.Request) (*http.Response, error) {
 	for attempt := 1; ; attempt++ {
+		if err := req.Context().Err(); err != nil {
+			return nil, err
+		}
 		attemptReq := req
 		if attempt > 1 {
 			attemptReq = req.Clone(req.Context())
@@ -230,11 +269,20 @@ func (b *Beatport) doRequest(req *http.Request) (*http.Response, error) {
 		if err == nil {
 			return resp, nil
 		}
-		if req.Method != http.MethodGet || attempt >= maxGetRequestAttempts || req.Context().Err() != nil || !isRetryableRequestError(err) {
+		if ctxErr := req.Context().Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if req.Method != http.MethodGet || attempt >= maxGetRequestAttempts || !isRetryableRequestError(err) {
 			return nil, err
 		}
 
-		time.Sleep(time.Duration(attempt) * getRetryBaseDelay)
+		timer := time.NewTimer(time.Duration(attempt) * getRetryBaseDelay)
+		select {
+		case <-req.Context().Done():
+			timer.Stop()
+			return nil, req.Context().Err()
+		case <-timer.C:
+		}
 	}
 }
 
