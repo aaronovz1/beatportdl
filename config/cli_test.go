@@ -9,12 +9,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"unspok3n/beatportdl/internal/securefile"
 )
 
 func TestCommandLineOverridesConfigWithoutChangingFile(t *testing.T) {
 	contents := []byte("username: file-user\npassword: file-pass\ndownloads_directory: /original\nquality: lossless\nsort_by_context: true\nfix_tags: true\ntrack_number_padding: 2\nwhitespace_character: _\nkeep_cover: true\n")
 	file := filepath.Join(t.TempDir(), "config.yml")
-	if err := os.WriteFile(file, contents, 0600); err != nil {
+	if err := securefile.Write(file, contents); err != nil {
 		t.Fatal(err)
 	}
 	opts, err := ParseCommandLine([]string{
@@ -47,7 +48,7 @@ func TestCommandLineOverridesConfigWithoutChangingFile(t *testing.T) {
 func TestCommandLineOverridesBeforeValidation(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.yml")
 	t.Setenv("PATH", "")
-	if err := os.WriteFile(file, []byte("key_system: invalid\nquality: medium-hls\n"), 0600); err != nil {
+	if err := securefile.Write(file, []byte("key_system: invalid\nquality: medium-hls\n")); err != nil {
 		t.Fatal(err)
 	}
 	opts, err := ParseCommandLine([]string{"--username=user", "--password=pass", "--downloads-directory=/downloads", "--key-system=camelot", "--quality=high"}, io.Discard)
@@ -109,7 +110,7 @@ func TestCommandLineRepeatedFlagsUseLastValue(t *testing.T) {
 
 func TestCommandLineConfigOverridesAreValidated(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.yml")
-	if err := os.WriteFile(file, []byte("username: user\npassword: pass\ndownloads_directory: /downloads\n"), 0600); err != nil {
+	if err := securefile.Write(file, []byte("username: user\npassword: pass\ndownloads_directory: /downloads\n")); err != nil {
 		t.Fatal(err)
 	}
 	for _, arg := range []string{
@@ -162,7 +163,7 @@ func TestTagMappingsRejectDuplicateAndTrailingDocuments(t *testing.T) {
 
 func TestConfigLegacyBooleanAndRoundTripCompatibility(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.yml")
-	if err := os.WriteFile(file, []byte("username: fixture\npassword: fixture\ndownloads_directory: /downloads\nkeep_cover: yes\nshow_progress: off\n"), 0600); err != nil {
+	if err := securefile.Write(file, []byte("username: fixture\npassword: fixture\ndownloads_directory: /downloads\nkeep_cover: yes\nshow_progress: off\n")); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Parse(file)

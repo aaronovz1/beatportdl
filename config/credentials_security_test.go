@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"runtime"
 	"testing"
+	"unspok3n/beatportdl/internal/securefile"
 )
 
 func TestCredentialDefaultConfigRoundTrip(t *testing.T) {
@@ -94,7 +95,7 @@ func TestCredentialParseRejectsSymlink(t *testing.T) {
 func TestCredentialSaveRoundTripsFalseZeroAndEmpty(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "config.yml")
-	if err := os.WriteFile(file, []byte("username: synthetic\npassword: synthetic\ndownloads_directory: .\n"), 0600); err != nil {
+	if err := securefile.Write(file, []byte("username: synthetic\npassword: synthetic\ndownloads_directory: .\n")); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Parse(file)

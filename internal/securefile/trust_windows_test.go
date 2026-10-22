@@ -75,14 +75,35 @@ func TestWindowsBroadReadDACLIsReplaced(t *testing.T) {
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.Stat(path)
+	beforeHandle, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Path-based Windows Stat resolves identity lazily, after replacement.
+	before, statErr := beforeHandle.Stat()
+	closeErr := beforeHandle.Close()
+	if statErr != nil || closeErr != nil {
+		t.Fatalf("original identity: %v, %v", statErr, closeErr)
+	}
 	data, err := Read(path)
 	if err != nil || string(data) != "synthetic" {
 		t.Fatalf("Read = %q, %v", data, err)
 	}
-	after, _ := os.Stat(path)
+	afterHandle, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer afterHandle.Close()
+	after, err := afterHandle.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if os.SameFile(before, after) {
 		t.Error("Read changed ACL on original inode")
+	}
+	private, err := checkFileHandle(afterHandle, after)
+	if err != nil || !private {
+		t.Fatalf("replacement is not private: %v, %v", private, err)
 	}
 	if err := Validate(path); err != nil {
 		t.Fatal(err)
