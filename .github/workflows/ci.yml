@@ -193,11 +193,11 @@ jobs:
           GOPROXY: "off"
           GOSUMDB: "off"
         run: |
-          $directory = [IO.Path]::GetTempPath()
-          while ($directory) {
-            $acl = Get-Acl -LiteralPath $directory
-            Write-Host ("Temp ancestor {0}: {1}" -f $directory, $acl.Sddl)
-            $directory = Split-Path -Parent $directory.TrimEnd('\')
+          $directory = [IO.DirectoryInfo]::new([IO.Path]::GetTempPath())
+          while ($null -ne $directory) {
+            $acl = Get-Acl -LiteralPath $directory.FullName
+            Write-Host ("Temp ancestor {0}: {1}" -f $directory.FullName, $acl.Sddl)
+            $directory = $directory.Parent
           }
           go test -count=1 -v -mod=vendor ./internal/securefile ./config ./internal/beatport ./internal/validator
 
