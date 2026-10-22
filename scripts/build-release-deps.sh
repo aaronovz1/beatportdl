@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Pins must identify real objects, not locally substituted commit/blob trees.
+export GIT_NO_REPLACE_OBJECTS=1
+
 target=${1:?usage: build-release-deps.sh <target> <prefix>}
 prefix=${2:?usage: build-release-deps.sh <target> <prefix>}
 
@@ -18,8 +21,8 @@ zlib_urls=${ZLIB_URLS:-"https://zlib.net/fossils/${zlib_tarball} https://zlib.ne
 zlib_sha256=${ZLIB_SHA256:-bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16}
 zlib_github_sha256=${ZLIB_GITHUB_SHA256:-b99a0b86c0ba9360ec7e78c4f1e43b1cbdf1e6936c8fa0f6835c0cd694a495a1}
 
-taglib_version=${TAGLIB_VERSION:-2.3}
-taglib_commit=${TAGLIB_COMMIT:-1b94b93762636ebe5733180c3e825be4621e4c7f}
+taglib_version=${TAGLIB_VERSION:-2.3.2}
+taglib_commit=${TAGLIB_COMMIT:-deadc2990767dfbda0701e0ab35fdeea653db08f}
 taglib_url=${TAGLIB_URL:-https://github.com/taglib/taglib.git}
 
 case "$target" in
@@ -132,9 +135,9 @@ ensure_zlib_source() {
   fi
   verify_zlib_sha256 "$tarball"
 
-  if [ ! -d "$source_dir" ]; then
-    tar -xzf "$tarball" -C "$sources_dir"
-  fi
+  # Extract verified bytes on every invocation, never reuse a mutable source tree.
+  rm -rf "$source_dir" || exit 1
+  tar -xzf "$tarball" -C "$sources_dir" || exit 1
 
   printf '%s\n' "$source_dir"
 }
@@ -143,7 +146,9 @@ ensure_taglib_source() {
   local source_dir="$sources_dir/taglib-$taglib_version"
 
   if [ ! -d "$source_dir/.git" ]; then
-    retry_clean 3 "$source_dir" git clone --depth 1 --branch "v${taglib_version}" --recurse-submodules --shallow-submodules "$taglib_url" "$source_dir" >&2 || {
+    retry_clean 3 "$source_dir" git -c core.autocrlf=false -c core.eol=lf clone \
+      --config core.autocrlf=false --config core.eol=lf \
+      --depth 1 --branch "v${taglib_version}" --recurse-submodules --shallow-submodules "$taglib_url" "$source_dir" >&2 || {
       printf 'unable to clone TagLib source from %s\n' "$taglib_url" >&2
       exit 1
     }
@@ -153,6 +158,57 @@ ensure_taglib_source() {
     printf 'unexpected TagLib commit in %s\n' "$source_dir" >&2
     exit 1
   fi
+
+  # Hash raw worktree bytes as well as checking status. Git index flags such as
+  # assume-unchanged must not hide edits from the native source-cache boundary.
+  python3 - "$source_dir" "$taglib_commit" <<'PY' || exit 1
+import hashlib
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+
+
+def git(root, *args):
+    return subprocess.check_output(['git', '--no-replace-objects', '-C', str(root), '-c', 'core.fsmonitor=false', *args])
+
+
+def verify(root, expected):
+    if root.is_symlink() or git(root, 'rev-parse', 'HEAD').decode().strip() != expected:
+        raise ValueError('unexpected source commit or symlink')
+    if git(root, 'status', '--porcelain=v1', '--untracked-files=all', '--ignored', '--ignore-submodules=none'):
+        raise ValueError('tracked, untracked, ignored, or submodule changes')
+    algorithm = git(root, 'rev-parse', '--show-object-format').decode().strip()
+    for entry in git(root, 'ls-tree', '-rz', '--full-tree', 'HEAD').split(b'\0'):
+        if not entry:
+            continue
+        metadata, name = entry.split(b'\t', 1)
+        mode, kind, digest = metadata.decode().split()
+        path = root / os.fsdecode(name)
+        for parent in path.relative_to(root).parents:
+            if (root / parent).is_symlink():
+                raise ValueError('symlink source directory: ' + str(path))
+        if kind == 'commit':
+            verify(path, digest)
+            continue
+        info = path.lstat()
+        if mode == '120000' and stat.S_ISLNK(info.st_mode):
+            content = os.fsencode(os.readlink(path))
+        elif mode != '120000' and stat.S_ISREG(info.st_mode):
+            content = path.read_bytes()
+        else:
+            raise ValueError('unexpected source file type: ' + str(path))
+        actual = hashlib.new(algorithm, b'blob ' + str(len(content)).encode() + b'\0' + content).hexdigest()
+        if actual != digest:
+            raise ValueError('source content mismatch: ' + str(path))
+
+
+try:
+    verify(Path(sys.argv[1]), sys.argv[2])
+except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    raise SystemExit('TagLib source must be pristine: ' + str(error))
+PY
 
   printf '%s\n' "$source_dir"
 }

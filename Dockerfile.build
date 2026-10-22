@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-FROM golang:1.22.5-bookworm
+FROM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG ZIG_VERSION=0.16.0
@@ -9,8 +9,8 @@ ARG ZIG_AARCH64_LINUX_SHA256=ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a
 ARG ZLIB_VERSION=1.3.2
 ARG ZLIB_TAR_SHA256=bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
 ARG ZLIB_GITHUB_TAR_SHA256=b99a0b86c0ba9360ec7e78c4f1e43b1cbdf1e6936c8fa0f6835c0cd694a495a1
-ARG TAGLIB_VERSION=2.3
-ARG TAGLIB_COMMIT=1b94b93762636ebe5733180c3e825be4621e4c7f
+ARG TAGLIB_VERSION=2.3.2
+ARG TAGLIB_COMMIT=deadc2990767dfbda0701e0ab35fdeea653db08f
 
 RUN apt-get -o Acquire::Retries=3 update && apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
     ca-certificates \
@@ -87,8 +87,19 @@ COPY scripts/docker-builder-entrypoint.sh /usr/local/bin/beatportdl-builder
 COPY scripts/zig-ar.sh scripts/zig-ranlib.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/beatportdl-builder /usr/local/bin/zig-ar.sh /usr/local/bin/zig-ranlib.sh
 
+RUN { go version; zig version; cmake --version; ninja --version; git --version; \
+      printf 'TagLib %s %s\nzlib %s\n' "$TAGLIB_VERSION" "$TAGLIB_COMMIT" "$ZLIB_VERSION"; \
+      dpkg-query -W; } > /opt/build-toolchain.txt
+
 WORKDIR /workspace
 
-ENV GOCACHE=/tmp/go-cache
+ENV GOCACHE=/tmp/go-cache \
+    GOMODCACHE=/tmp/go-mod-cache \
+    GOPROXY=off \
+    GOSUMDB=off \
+    GOTOOLCHAIN=local \
+    GOFLAGS="-mod=vendor -trimpath -buildvcs=false" \
+    HOME=/tmp/home \
+    XDG_CACHE_HOME=/tmp/cache
 
 ENTRYPOINT ["/usr/local/bin/beatportdl-builder"]

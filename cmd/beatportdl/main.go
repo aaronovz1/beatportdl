@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"unspok3n/beatportdl/config"
 	"unspok3n/beatportdl/internal/beatport"
+	"unspok3n/beatportdl/internal/securefile"
 )
 
 const (
@@ -97,7 +98,7 @@ func main() {
 			fmt.Println(err.Error())
 			Pause()
 		}
-		f, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+		f, err := securefile.OpenAppend(logFilePath)
 		if err != nil {
 			panic(err)
 		}

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unspok3n/beatportdl/internal/securefile"
 	"unspok3n/beatportdl/internal/taglib"
 
 	"github.com/fatih/color"
@@ -66,7 +67,7 @@ func (app *application) downloadWorker(wg *sync.WaitGroup, fn func()) {
 }
 
 func (app *application) logWorkerPanic(worker string, recovered interface{}) {
-	message := fmt.Sprintf("%s panic: %v\n%s", worker, recovered, debug.Stack())
+	message := app.redactLog(fmt.Sprintf("%s panic: %v\n%s", worker, recovered, debug.Stack()))
 	if app.logWriter != nil {
 		fmt.Fprint(app.logWriter, message)
 	} else {
@@ -145,7 +146,10 @@ func (app *application) downloadFile(url string, destination string, pbPrefix st
 		}
 		bar := app.pbp.AddBar(contentLength, ProgressBarOptions(pbPrefix)...)
 
-		proxyReader := bar.ProxyReader(resp.Body)
+		proxyReader, err := bar.ProxyReader(resp.Body)
+		if err != nil {
+			return fmt.Errorf("create download progress reader: %w", err)
+		}
 		defer proxyReader.Close()
 
 		written, err = io.Copy(out, proxyReader)
@@ -307,7 +311,7 @@ func Pause() {
 }
 
 func (app *application) LogError(caller string, err error) {
-	message := fmt.Sprintf("%s: %s\n", caller, err.Error())
+	message := app.redactLog(fmt.Sprintf("%s: %s\n", caller, err.Error()))
 	fmt.Fprint(app.logWriter, message)
 
 	if app.logFile != nil {
@@ -316,7 +320,7 @@ func (app *application) LogError(caller string, err error) {
 }
 
 func (app *application) LogInfo(info string) {
-	message := fmt.Sprintf("%s\n", info)
+	message := app.redactLog(fmt.Sprintf("%s\n", info))
 	fmt.Fprint(app.logWriter, message)
 }
 
@@ -398,19 +402,29 @@ func findFile(fileName string, additionalDirs []string) (string, bool, error) {
 	configFilePaths = append(configFilePaths, filePathExec)
 
 	for _, addadditionalDir := range additionalDirs {
-		additionalFilePath := path.Join(addadditionalDir, fileName)
+		additionalFilePath := filepath.Join(addadditionalDir, fileName)
 		configFilePaths = append(configFilePaths, additionalFilePath)
 	}
 
 	for _, configFilePath := range configFilePaths {
-		_, err = os.Stat(configFilePath)
-		if err == nil {
-			return configFilePath, true, nil
+		_, err = os.Lstat(configFilePath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
 		}
+		if err != nil {
+			return "", false, fmt.Errorf("inspect %s: %w", configFilePath, err)
+		}
+		if err := securefile.Validate(configFilePath); err != nil {
+			return "", false, fmt.Errorf("unsafe selected file %s: %w", configFilePath, err)
+		}
+		return configFilePath, true, nil
 	}
 
 	// last entry in list is default
 	defaultFilePath := configFilePaths[len(configFilePaths)-1]
+	if err := securefile.Validate(defaultFilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", false, fmt.Errorf("unsafe default file %s: %w", defaultFilePath, err)
+	}
 	return defaultFilePath, false, nil
 }
 

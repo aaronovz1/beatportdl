@@ -95,7 +95,7 @@ func (app *application) downloadsDirectory(baseDir string, entity DownloadsDirec
 				},
 			)
 			if app.config.SortByLabel && entity != nil {
-				baseDir = filepath.Join(baseDir, castedEntity.Label.Name)
+				baseDir = filepath.Join(baseDir, beatport.SanitizePath(castedEntity.Label.Name, app.config.WhitespaceCharacter))
 			}
 		case *beatport.Playlist:
 			subDir = castedEntity.DirectoryName(
@@ -136,7 +136,12 @@ func (app *application) downloadsDirectory(baseDir string, entity DownloadsDirec
 }
 
 func (app *application) setupDownloadsDirectory(baseDir string, entity DownloadsDirectoryEntity) (string, error) {
-	return app.createDirectory(app.downloadsDirectory(baseDir, entity))
+	directory := app.downloadsDirectory(baseDir, entity)
+	relative, err := filepath.Rel(baseDir, directory)
+	if err != nil || !filepath.IsLocal(relative) {
+		return "", fmt.Errorf("download directory must remain within the configured root")
+	}
+	return app.createDirectory(directory)
 }
 
 func (app *application) setupTrackDownloadsDirectory(baseDir string, track *beatport.Track) (string, error) {
@@ -757,7 +762,9 @@ func (app *application) tagTrack(location string, track *beatport.Track, coverPa
 		}
 
 		for tag, value := range rawTags {
-			file.SetItemMp4(tag, value)
+			if err := file.SetItemMp4(tag, value); err != nil {
+				return err
+			}
 		}
 	}
 

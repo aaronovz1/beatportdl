@@ -9,10 +9,9 @@ import (
 	"hash/fnv"
 	"net/http"
 	"net/url"
-	"os"
-	"path"
 	"sync"
 	"time"
+	"unspok3n/beatportdl/internal/securefile"
 )
 
 const (
@@ -68,7 +67,7 @@ func (a *Auth) LoadCache() error {
 	}
 	defer a.unlockRefresh()
 
-	data, err := os.ReadFile(a.cacheFile)
+	data, err := securefile.Read(a.cacheFile)
 	if err != nil {
 		return fmt.Errorf("failed to read token file: %w", err)
 	}
@@ -109,12 +108,7 @@ func (a *Auth) writeCache(token *tokenPair) error {
 		return fmt.Errorf("failed to marshal tokenPair: %w", err)
 	}
 
-	err = os.MkdirAll(path.Dir(a.cacheFile), 0700)
-	if err != nil {
-		return fmt.Errorf("could not create folder for cache file: %w", err)
-	}
-
-	if err := os.WriteFile(a.cacheFile, data, 0600); err != nil {
+	if err := securefile.Write(a.cacheFile, data); err != nil {
 		return fmt.Errorf("failed to write token to cache: %w", err)
 	}
 

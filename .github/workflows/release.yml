@@ -1,203 +1,431 @@
 name: Release
 
 on:
+
   push:
     tags:
       - "v*"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
-  contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  contents: read
 
 jobs:
+
+  release-gate:
+    name: Validate tag and test exact release commit
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Validate release tag
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+
+          ref = os.environ["GITHUB_REF"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          number = r"(?:0|[1-9][0-9]*)"
+          identifier = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+          semver = rf"v{number}\.{number}\.{number}(?:-{identifier}(?:\.{identifier})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+          if (os.environ.get("GITHUB_REF_TYPE") != "tag"
+                  or ref != "refs/tags/" + tag
+                  or re.fullmatch(semver, tag) is None
+                  or re.fullmatch(r"[0-9a-f]{40}", os.environ["GITHUB_SHA"]) is None):
+              raise SystemExit("Release requires an exact commit and a v-prefixed SemVer tag, not a branch.")
+          PY
+
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: "${{ github.sha }}"
+          persist-credentials: false
+
+      - name: Set up Go 1.27.3
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache: false
+
+      - name: Verify exact commit
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Validate workflows and build shell scripts
+        run: |
+          set -euo pipefail
+          tools="$(mktemp -d)"
+          trap 'rm -rf "$tools"' EXIT
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o "$tools/actionlint.tar.gz"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $tools/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$tools/actionlint.tar.gz" -C "$tools" actionlint
+          "$tools/actionlint"
+          shellcheck scripts/docker-build.sh scripts/docker-builder-entrypoint.sh scripts/build-release-deps.sh scripts/build-release-target.sh
+
+      - name: Build policy regressions and shell syntax
+        run: |
+          python3 -m unittest discover -s scripts/tests -v
+          for script in scripts/*.sh; do
+            case "$script" in
+              *build-release-*) bash -n "$script" ;;
+              *) sh -n "$script" ;;
+            esac
+          done
+
+      - name: Test exact release commit in isolated container
+        run: |
+          DOCKER_IMAGE=beatportdl-builder:release ./scripts/docker-build.sh test
+
   linux-release:
     name: Linux release artifacts
     runs-on: ubuntu-latest
+    needs: release-gate
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
 
-      - name: Build pinned builder image
-        run: docker build -f Dockerfile.build -t beatportdl-builder:release .
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: "${{ github.sha }}"
+          persist-credentials: false
 
-      - name: Build Linux release artifacts in container
-        run: docker run --rm -v "$PWD:/workspace" beatportdl-builder:release release-core
+      - name: Build Linux release artifacts in isolated container
+        run: |
+          DOCKER_IMAGE=beatportdl-builder:release ./scripts/docker-build.sh release-core
 
-      - name: Package Linux artifacts
+      - name: Package Linux artifacts and toolchain inventory
         run: |
           mkdir -p dist
           tar -C bin -czf "dist/beatportdl-${GITHUB_REF_NAME}-linux-amd64.tar.gz" beatportdl-linux-amd64
           tar -C bin -czf "dist/beatportdl-${GITHUB_REF_NAME}-linux-arm64.tar.gz" beatportdl-linux-arm64
+          cp bin/build-tools-container.txt dist/
 
       - name: Upload Linux release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-linux
-          path: dist/*
+          path: "dist/*"
           if-no-files-found: error
 
   macos-amd64-release:
-    name: macOS amd64 release artifact
+    name: darwin-amd64 release artifact
     runs-on: macos-15-intel
+    needs: release-gate
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
+          ref: "${{ github.sha }}"
+          persist-credentials: false
+
+      - name: Set up Go 1.27.3
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache: false
 
       - name: Install native build tools
-        run: brew install cmake ninja
+        run: |
+          brew install cmake ninja
 
-      - name: Build pinned macOS amd64 dependencies
-        run: ./scripts/build-release-deps.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
+      - name: Build pinned native dependencies
+        shell: bash
+        run: |
+          ./scripts/build-release-deps.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
 
-      - name: Build macOS amd64 artifact
-        run: ./scripts/build-release-target.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
+      - name: Build native artifact
+        shell: bash
+        run: |
+          ./scripts/build-release-target.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
 
-      - name: Package macOS amd64 artifact
+      - name: Record toolchain and Go module inventory
+        shell: bash
         run: |
           mkdir -p dist
+          {
+            go version
+            cmake --version
+            ninja --version
+            clang --version
+            printf 'TagLib 2.3.2 deadc2990767dfbda0701e0ab35fdeea653db08f\nzlib 1.3.2\n'
+            go version -m bin/beatportdl-darwin-amd64
+          } > dist/build-tools-darwin-amd64.txt
+
+      - name: Package macOS artifact
+        run: |
           tar -C bin -czf "dist/beatportdl-${GITHUB_REF_NAME}-darwin-amd64.tar.gz" beatportdl-darwin-amd64
 
-      - name: Upload macOS amd64 release artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-darwin-amd64
-          path: dist/*
+          path: "dist/*"
           if-no-files-found: error
 
   macos-arm64-release:
-    name: macOS arm64 release artifact
+    name: darwin-arm64 release artifact
     runs-on: macos-15
+    needs: release-gate
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
+          ref: "${{ github.sha }}"
+          persist-credentials: false
+
+      - name: Set up Go 1.27.3
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache: false
 
       - name: Install native build tools
-        run: brew install cmake ninja
+        run: |
+          brew install cmake ninja
 
-      - name: Build pinned macOS arm64 dependencies
-        run: ./scripts/build-release-deps.sh darwin-arm64 "$RUNNER_TEMP/deps/darwin-arm64"
+      - name: Build pinned native dependencies
+        shell: bash
+        run: |
+          ./scripts/build-release-deps.sh darwin-arm64 "$RUNNER_TEMP/deps/darwin-arm64"
 
-      - name: Build macOS arm64 artifact
-        run: ./scripts/build-release-target.sh darwin-arm64 "$RUNNER_TEMP/deps/darwin-arm64"
+      - name: Check Go vulnerabilities
+        env:
+          GOTOOLCHAIN: local
+          GOBIN: ${{ runner.temp }}/security-tools
+          GOVULNDB: https://vuln.go.dev
+          CGO_ENABLED: "1"
+          CGO_CPPFLAGS: -I${{ runner.temp }}/deps/darwin-arm64/include
+          CGO_LDFLAGS: -L${{ runner.temp }}/deps/darwin-arm64/lib
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$GOBIN/govulncheck" ./...
 
-      - name: Package macOS arm64 artifact
+      - name: Build native artifact
+        shell: bash
+        run: |
+          ./scripts/build-release-target.sh darwin-arm64 "$RUNNER_TEMP/deps/darwin-arm64"
+
+      - name: Record toolchain and Go module inventory
+        shell: bash
         run: |
           mkdir -p dist
+          {
+            go version
+            cmake --version
+            ninja --version
+            clang --version
+            printf 'TagLib 2.3.2 deadc2990767dfbda0701e0ab35fdeea653db08f\nzlib 1.3.2\n'
+            go version -m bin/beatportdl-darwin-arm64
+          } > dist/build-tools-darwin-arm64.txt
+
+      - name: Package macOS artifact
+        run: |
           tar -C bin -czf "dist/beatportdl-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" beatportdl-darwin-arm64
 
-      - name: Upload macOS arm64 release artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-darwin-arm64
-          path: dist/*
+          path: "dist/*"
           if-no-files-found: error
 
   windows-release:
-    name: Windows amd64 release artifact
+    name: windows-amd64 release artifact
     runs-on: windows-2022
+    needs: release-gate
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
+          ref: "${{ github.sha }}"
+          persist-credentials: false
+
+      - name: Set up Go 1.27.3
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache: false
 
       - name: Set up MSYS2
-        uses: msys2/setup-msys2@v2
+        uses: "msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e"
         with:
           msystem: MINGW64
           update: true
           path-type: inherit
-          install: >-
-            git
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-ninja
+          install: git python mingw-w64-x86_64-cmake mingw-w64-x86_64-gcc mingw-w64-x86_64-ninja
 
-      - name: Build pinned Windows dependencies
-        shell: msys2 {0}
-        run: ./scripts/build-release-deps.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
+      - name: Run Windows filesystem and pure-Go regressions
+        shell: "msys2 {0}"
+        run: |
+          GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test -mod=vendor ./internal/securefile ./config ./internal/beatport ./internal/validator
 
-      - name: Build Windows artifact
-        shell: msys2 {0}
-        run: ./scripts/build-release-target.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
+      - name: Build pinned native dependencies
+        shell: "msys2 {0}"
+        run: |
+          ./scripts/build-release-deps.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
+
+      - name: Build native artifact
+        shell: "msys2 {0}"
+        run: |
+          ./scripts/build-release-target.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
 
       - name: Verify Windows runtime dependencies
-        shell: msys2 {0}
-        run: ./scripts/check-windows-runtime-deps.sh bin/beatportdl-windows-amd64.exe
+        shell: "msys2 {0}"
+        run: |
+          ./scripts/check-windows-runtime-deps.sh bin/beatportdl-windows-amd64.exe
+
+      - name: Record toolchain and Go module inventory
+        shell: "msys2 {0}"
+        run: |
+          mkdir -p dist
+          {
+            go version
+            cmake --version
+            ninja --version
+            gcc --version
+            printf 'TagLib 2.3.2 deadc2990767dfbda0701e0ab35fdeea653db08f\nzlib 1.3.2\n'
+            go version -m bin/beatportdl-windows-amd64.exe
+          } > dist/build-tools-windows-amd64.txt
 
       - name: Package Windows artifact
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path bin/beatportdl-windows-amd64.exe -DestinationPath "dist/beatportdl-$env:GITHUB_REF_NAME-windows-amd64.zip" -Force
 
-      - name: Upload Windows release artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-windows
-          path: dist/*
+          name: release-windows-amd64
+          path: "dist/*"
           if-no-files-found: error
+
+  attest-release:
+    name: Attest packaged release artifacts
+    runs-on: ubuntu-latest
+    needs:
+      - release-gate
+      - linux-release
+      - macos-amd64-release
+      - macos-arm64-release
+      - windows-release
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "release-*"
+          path: dist
+
+      - name: Generate dependency SBOMs
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from urllib.parse import quote
+
+          output = Path("dist/release-sbom")
+          output.mkdir(exist_ok=True)
+          records = sorted(Path("dist").glob("release-*/build-tools-*.txt"))
+          if len(records) != 4:
+              raise SystemExit("Expected toolchain inventories from all four platform jobs")
+          for record in records:
+              target = record.stem.removeprefix("build-tools-")
+              if target == "container":
+                  target = "linux"
+              components = {
+                  ("TagLib", "2.3.2"): {"type": "library", "name": "TagLib", "version": "2.3.2",
+                                        "purl": "pkg:github/taglib/taglib@2.3.2"},
+                  ("zlib", "1.3.2"): {"type": "library", "name": "zlib", "version": "1.3.2",
+                                      "purl": "pkg:generic/zlib@1.3.2"},
+              }
+              for line in record.read_text().splitlines():
+                  fields = line.split()
+                  if len(fields) >= 3 and fields[0] == "dep":
+                      name, version = fields[1:3]
+                      components[name, version] = {
+                          "type": "library", "name": name, "version": version,
+                          "purl": "pkg:golang/" + quote(name, safe="/") + "@" + quote(version, safe=""),
+                      }
+              document = {
+                  "bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,
+                  "metadata": {"component": {"type": "application", "name": "beatportdl",
+                                             "version": os.environ["GITHUB_REF_NAME"]}},
+                  "components": [components[key] for key in sorted(components)],
+              }
+              (output / ("sbom-" + target + ".cdx.json")).write_text(json.dumps(document, indent=2) + "\n")
+          PY
+
+      - name: Upload dependency SBOMs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-sbom
+          path: dist/release-sbom/*
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "dist/**/*"
 
   publish-release:
     name: Publish GitHub release
     runs-on: ubuntu-latest
     needs:
-      - linux-release
-      - macos-amd64-release
-      - macos-arm64-release
-      - windows-release
+      - release-gate
+      - attest-release
+    permissions:
+      contents: write
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: "${{ github.sha }}"
+          persist-credentials: false
 
       - name: Download packaged artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: release-*
+          pattern: "release-*"
           path: dist
 
       - name: Generate checksums
         run: |
-          mkdir -p dist
+          set -euo pipefail
           for artifact in dist/*/*; do
             (cd "$(dirname "$artifact")" && sha256sum "$(basename "$artifact")")
           done > dist/SHA256SUMS
 
       - name: Publish release assets
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           notes_file="$(mktemp)"
+          trap 'rm -f "$notes_file"' EXIT
           ./scripts/release-notes.sh "$tag" > "$notes_file"
 
           release_flags=(--title "$tag" --notes-file "$notes_file")
-          if [[ "$tag" =~ -rc[0-9]+$ ]]; then
+          if [[ "${tag%%+*}" == *-* ]]; then
             release_flags+=(--prerelease --latest=false)
           fi
 
           if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
             gh release edit "$tag" --repo "$GH_REPO" "${release_flags[@]}"
           else
-            gh release create "$tag" --repo "$GH_REPO" "${release_flags[@]}"
+            gh release create "$tag" --repo "$GH_REPO" --verify-tag "${release_flags[@]}"
           fi
-
           gh release upload "$tag" --repo "$GH_REPO" dist/*/* dist/SHA256SUMS --clobber

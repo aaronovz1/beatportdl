@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v3"
 )
 
 type CommandLineOptions struct {
@@ -88,8 +89,13 @@ func ParseCommandLine(args []string, output io.Writer) (*CommandLineOptions, err
 	stringFlag("proxy", "Proxy URL", func(c *AppConfig, v string) { c.Proxy = v })
 	flags.Func("tag-mappings", "Tag mappings as a YAML or JSON map (replaces configured mappings)", func(raw string) error {
 		var mappings map[string]map[string]string
-		if err := yaml.UnmarshalStrict([]byte(raw), &mappings); err != nil {
+		decoder := yaml.NewDecoder(strings.NewReader(raw))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&mappings); err != nil {
 			return fmt.Errorf("expected a YAML or JSON map of formats to tag mappings")
+		}
+		if err := decoder.Decode(new(interface{})); err != io.EOF {
+			return fmt.Errorf("expected exactly one tag mappings document")
 		}
 		opts.overrides = append(opts.overrides, func(cfg *AppConfig) { cfg.TagMappings = mappings })
 		return nil

@@ -1,24 +1,42 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/grafov/m3u8"
+	m3u8 "github.com/Eyevinn/hls-m3u8/m3u8"
 	"github.com/vbauerster/mpb/v8"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
+	"unspok3n/beatportdl/internal/securefile"
 )
+
+const (
+	maxHLSManifestBytes = 1024 * 1024
+	maxHLSSegmentBytes  = 64 * 1024 * 1024
+	maxHLSKeyBytes      = 32
+)
+
+func readHLSBody(reader io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("HLS response exceeds %d bytes", limit)
+	}
+	return data, nil
+}
 
 type StreamKey struct {
 	Value []byte
@@ -34,7 +52,11 @@ func (app *application) getStreamSegments(stream string) (*[]string, *StreamKey,
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, fmt.Errorf("request failed with status code: %d", resp.StatusCode)
 	}
-	playlist, _, err := m3u8.DecodeFrom(resp.Body, true)
+	manifest, err := readHLSBody(resp.Body, maxHLSManifestBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	playlist, _, err := m3u8.DecodeFrom(bytes.NewReader(manifest), true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -46,9 +68,20 @@ func (app *application) getStreamSegments(stream string) (*[]string, *StreamKey,
 	if err != nil {
 		return nil, nil, err
 	}
-	base := u.Scheme + "://" + u.Host + path.Dir(u.Path) + "/"
+	resolve := func(reference string) (string, error) {
+		child, err := url.Parse(reference)
+		if err != nil {
+			return "", err
+		}
+		resolved := u.ResolveReference(child)
+		if resolved.Scheme != "https" && resolved.Scheme != "http" || resolved.Host == "" || resolved.User != nil {
+			return "", errors.New("invalid HLS resource URL")
+		}
+		return resolved.String(), nil
+	}
 	var segments []string
 	var streamKey StreamKey
+	var firstKey *m3u8.Key
 	for i, segment := range media.Segments {
 		if segment == nil {
 			break
@@ -57,13 +90,24 @@ func (app *application) getStreamSegments(stream string) (*[]string, *StreamKey,
 			return nil, nil, fmt.Errorf("stream segment %d has empty URI", i)
 		}
 		if i == 0 {
-			if segment.Key == nil || segment.Key.URI == "" {
+			for keyIndex := range segment.Keys {
+				candidate := &segment.Keys[keyIndex]
+				if candidate.Method == "AES-128" && (candidate.Keyformat == "" || candidate.Keyformat == "identity") {
+					firstKey = candidate
+					break
+				}
+			}
+			if firstKey == nil || firstKey.URI == "" {
 				return nil, nil, fmt.Errorf("stream segment %d is missing an encryption key URI", i)
 			}
-			if segment.Key.IV == "" {
+			if firstKey.IV == "" {
 				return nil, nil, fmt.Errorf("stream segment %d is missing an encryption key IV", i)
 			}
-			req, err := app.getMedia(base + segment.Key.URI)
+			keyURL, err := resolve(firstKey.URI)
+			if err != nil {
+				return nil, nil, err
+			}
+			req, err := app.getMedia(keyURL)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -71,18 +115,28 @@ func (app *application) getStreamSegments(stream string) (*[]string, *StreamKey,
 			if req.StatusCode != http.StatusOK {
 				return nil, nil, fmt.Errorf("get stream key failed with status code: %d", req.StatusCode)
 			}
-			keyBytes, err := io.ReadAll(req.Body)
+			keyBytes, err := readHLSBody(req.Body, maxHLSKeyBytes)
 			if err != nil {
 				return nil, nil, fmt.Errorf("read stream key: %w", err)
 			}
-			ivBytes, err := hex.DecodeString(strings.TrimPrefix(segment.Key.IV, "0x"))
+			ivBytes, err := hex.DecodeString(strings.TrimPrefix(firstKey.IV, "0x"))
 			if err != nil {
 				return nil, nil, fmt.Errorf("decode stream iv: %v", err)
 			}
 			streamKey.Value = keyBytes
 			streamKey.IV = ivBytes
+		} else {
+			for _, key := range segment.Keys {
+				if key.Method != firstKey.Method || key.URI != firstKey.URI || key.IV != firstKey.IV || key.Keyformat != firstKey.Keyformat {
+					return nil, nil, errors.New("HLS encryption key changes are not supported")
+				}
+			}
 		}
-		segments = append(segments, base+segment.URI)
+		segmentURL, err := resolve(segment.URI)
+		if err != nil {
+			return nil, nil, err
+		}
+		segments = append(segments, segmentURL)
 	}
 
 	return &segments, &streamKey, nil
@@ -153,7 +207,7 @@ func (app *application) downloadSegments(directory string, segmentUrls []string,
 			if resp.StatusCode != http.StatusOK {
 				return errors.New(resp.Status)
 			}
-			segBytes, err := io.ReadAll(resp.Body)
+			segBytes, err := readHLSBody(resp.Body, maxHLSSegmentBytes)
 			if err != nil {
 				return err
 			}
@@ -193,22 +247,15 @@ func remuxToM4AContext(ctx context.Context, input, output string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	tempFile, err := os.CreateTemp(filepath.Dir(output), ".beatportdl-remux-*.m4a")
+	if err := securefile.CheckDirectory(filepath.Dir(output)); err != nil {
+		return fmt.Errorf("unsafe remux destination: %w", err)
+	}
+	stagingDirectory, err := os.MkdirTemp(filepath.Dir(output), ".beatportdl-remux-")
 	if err != nil {
-		return fmt.Errorf("create temp output: %w", err)
+		return fmt.Errorf("create private remux directory: %w", err)
 	}
-	tempOutput := tempFile.Name()
-	if err := tempFile.Close(); err != nil {
-		_ = os.Remove(tempOutput)
-		return fmt.Errorf("close temp output: %w", err)
-	}
-	_ = os.Remove(tempOutput)
-	keepTemp := false
-	defer func() {
-		if !keepTemp {
-			_ = os.Remove(tempOutput)
-		}
-	}()
+	defer os.RemoveAll(stagingDirectory)
+	tempOutput := filepath.Join(stagingDirectory, "audio.m4a")
 
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-y",
@@ -239,7 +286,6 @@ func remuxToM4AContext(ctx context.Context, input, output string) error {
 	if err := os.Rename(tempOutput, output); err != nil {
 		return fmt.Errorf("move remuxed m4a into place: %w", err)
 	}
-	keepTemp = true
 	return nil
 }
 

@@ -1,51 +1,53 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"path"
+	"unspok3n/beatportdl/internal/securefile"
 	"unspok3n/beatportdl/internal/validator"
 
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v3"
 )
 
 type AppConfig struct {
-	Username      string `yaml:"username,omitempty"`
-	Password      string `yaml:"password,omitempty"`
+	Username      string `yaml:"username"`
+	Password      string `yaml:"password"`
 	Quality       string `yaml:"quality,omitempty"`
-	WriteErrorLog bool   `yaml:"write_error_log,omitempty"`
-	ShowProgress  bool   `yaml:"show_progress,omitempty"`
+	WriteErrorLog bool   `yaml:"write_error_log"`
+	ShowProgress  bool   `yaml:"show_progress"`
 
+	// Zero workers and empty required enums retain partial-config construction;
+	// all valid false, zero, and empty settings must be emitted for round trips.
 	MaxGlobalWorkers   int `yaml:"max_global_workers,omitempty"`
 	MaxDownloadWorkers int `yaml:"max_download_workers,omitempty"`
 
-	DownloadsDirectory      string `yaml:"downloads_directory,omitempty"`
-	SortByContext           bool   `yaml:"sort_by_context,omitempty"`
-	SortByLabel             bool   `yaml:"sort_by_label,omitempty"`
-	ForceReleaseDirectories bool   `yaml:"force_release_directories,omitempty"`
+	DownloadsDirectory      string `yaml:"downloads_directory"`
+	SortByContext           bool   `yaml:"sort_by_context"`
+	SortByLabel             bool   `yaml:"sort_by_label"`
+	ForceReleaseDirectories bool   `yaml:"force_release_directories"`
 	TrackExists             string `yaml:"track_exists,omitempty"`
-	TrackNumberPadding      int    `yaml:"track_number_padding,omitempty"`
+	TrackNumberPadding      int    `yaml:"track_number_padding"`
 
-	ReleaseDirectoryTemplate  string `yaml:"release_directory_template,omitempty"`
-	PlaylistDirectoryTemplate string `yaml:"playlist_directory_template,omitempty"`
-	ChartDirectoryTemplate    string `yaml:"chart_directory_template,omitempty"`
-	LabelDirectoryTemplate    string `yaml:"label_directory_template,omitempty"`
-	ArtistDirectoryTemplate   string `yaml:"artist_directory_template,omitempty"`
-	TrackFileTemplate         string `yaml:"track_file_template,omitempty"`
-	WhitespaceCharacter       string `yaml:"whitespace_character,omitempty"`
-	ArtistsLimit              int    `yaml:"artists_limit,omitempty"`
-	ArtistsShortForm          string `yaml:"artists_short_form,omitempty"`
+	ReleaseDirectoryTemplate  string `yaml:"release_directory_template"`
+	PlaylistDirectoryTemplate string `yaml:"playlist_directory_template"`
+	ChartDirectoryTemplate    string `yaml:"chart_directory_template"`
+	LabelDirectoryTemplate    string `yaml:"label_directory_template"`
+	ArtistDirectoryTemplate   string `yaml:"artist_directory_template"`
+	TrackFileTemplate         string `yaml:"track_file_template"`
+	WhitespaceCharacter       string `yaml:"whitespace_character"`
+	ArtistsLimit              int    `yaml:"artists_limit"`
+	ArtistsShortForm          string `yaml:"artists_short_form"`
 	KeySystem                 string `yaml:"key_system,omitempty"`
 
-	CoverSize string `yaml:"cover_size,omitempty"`
-	KeepCover bool   `yaml:"keep_cover,omitempty"`
-	FixTags   bool   `yaml:"fix_tags,omitempty"`
+	CoverSize string `yaml:"cover_size"`
+	KeepCover bool   `yaml:"keep_cover"`
+	FixTags   bool   `yaml:"fix_tags"`
 
-	TagMappings map[string]map[string]string `yaml:"tag_mappings,omitempty"`
+	TagMappings map[string]map[string]string `yaml:"tag_mappings"`
 
-	Proxy string `yaml:"proxy,omitempty"`
+	Proxy string `yaml:"proxy"`
 }
 
 const (
@@ -73,13 +75,9 @@ func FFMPEGInstalled() bool {
 	return err == nil
 }
 
-func Parse(filePath string, overrides ...func(*AppConfig)) (*AppConfig, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	config := AppConfig{
+// DefaultConfig supplies the same defaults for first-run setup and file parsing.
+func DefaultConfig() AppConfig {
+	return AppConfig{
 		Quality:                   "lossless",
 		CoverSize:                 DefaultCoverSize,
 		TrackFileTemplate:         "{number}. {artists} - {name} ({mix_name})",
@@ -98,7 +96,15 @@ func Parse(filePath string, overrides ...func(*AppConfig)) (*AppConfig, error) {
 		MaxGlobalWorkers:          15,
 		MaxDownloadWorkers:        15,
 	}
-	decoder := yaml.NewDecoder(file)
+}
+
+func Parse(filePath string, overrides ...func(*AppConfig)) (*AppConfig, error) {
+	data, err := securefile.Read(filePath)
+	if err != nil {
+		return nil, err
+	}
+	config := DefaultConfig()
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	if err := decoder.Decode(&config); err != nil {
 		return nil, fmt.Errorf("failed to decode config file: %w", err)
 	}
@@ -156,20 +162,12 @@ func Parse(filePath string, overrides ...func(*AppConfig)) (*AppConfig, error) {
 }
 
 func (c *AppConfig) Save(filePath string) error {
-	err := os.MkdirAll(path.Dir(filePath), 0700)
+	data, err := yaml.Marshal(c)
 	if err != nil {
-		return fmt.Errorf("could not create folder for configuration file: %w", err)
-	}
-
-	file, err := os.Create(filePath)
-	if err != nil {
-		return fmt.Errorf("create file: %w", err)
-	}
-	defer file.Close()
-
-	encoder := yaml.NewEncoder(file)
-	if err := encoder.Encode(&c); err != nil {
 		return fmt.Errorf("encode config: %w", err)
+	}
+	if err := securefile.Write(filePath, data); err != nil {
+		return fmt.Errorf("save config: %w", err)
 	}
 	return nil
 }

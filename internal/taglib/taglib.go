@@ -1,6 +1,7 @@
 package taglib
 
 /*
+	#cgo CXXFLAGS: -std=c++17
 	#cgo LDFLAGS: -ltag_c -ltag -lz
 	#include <stdlib.h>
 	#include <taglib/tag_c.h>
@@ -16,6 +17,7 @@ import (
 var (
 	ErrInvalid   = errors.New("invalid file")
 	ErrStripMp4  = errors.New("cannot strip mp4 tags")
+	ErrSetMp4    = errors.New("cannot set mp4 tag")
 	ErrSave      = errors.New("cannot save file")
 	ErrNoPicture = errors.New("no picture")
 )
@@ -64,12 +66,15 @@ func (f *File) Save() error {
 	return nil
 }
 
-func (f *File) SetItemMp4(key, value string) {
+func (f *File) SetItemMp4(key, value string) error {
 	keyC := C.CString(key)
 	defer C.free(unsafe.Pointer(keyC))
 	valueC := C.CString(value)
 	defer C.free(unsafe.Pointer(valueC))
-	C.taglib_set_item_mp4(f.fp, keyC, valueC)
+	if C.taglib_set_item_mp4(f.fp, keyC, valueC) != 1 {
+		return ErrSetMp4
+	}
+	return nil
 }
 
 func (f *File) StripMp4() error {

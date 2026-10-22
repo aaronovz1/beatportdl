@@ -2,8 +2,8 @@
 set -eu
 
 workspace=${WORKSPACE_DIR:-/workspace}
-src_root=/opt/src
-deps_root=/opt/deps
+src_root=/tmp/src
+deps_root=/tmp/deps
 macos_sdk_dir=${MACOS_SDK_DIR:-/opt/macos-sdk/MacOSX.sdk}
 
 die() {
@@ -124,6 +124,10 @@ ensure_target_deps() {
   target=$1
   prefix="$deps_root/$target"
 
+  if [ ! -d "$src_root" ]; then
+    cp -R /opt/src "$src_root"
+  fi
+
   if [ "${FORCE_REBUILD_DEPS:-0}" = "1" ]; then
     rm -rf "$prefix"
   fi
@@ -144,27 +148,27 @@ run_make_target() {
 
   case "$target" in
     linux-amd64)
-      env LINUX_AMD64_LIB_PATH="-L$prefix/lib -I$prefix/include" make -C "$workspace" "$target"
+      env LINUX_AMD64_LIB_PATH="-L$prefix/lib -I$prefix/include" make -C "$workspace" BUILD_DIR=/output "$target"
       ;;
     linux-arm64)
-      env LINUX_ARM64_LIB_PATH="-L$prefix/lib -I$prefix/include" make -C "$workspace" "$target"
+      env LINUX_ARM64_LIB_PATH="-L$prefix/lib -I$prefix/include" make -C "$workspace" BUILD_DIR=/output "$target"
       ;;
     windows-amd64)
-      env WINDOWS_AMD64_LIB_PATH="-L$prefix/lib -I$prefix/include" make -C "$workspace" "$target"
+      env WINDOWS_AMD64_LIB_PATH="-L$prefix/lib -I$prefix/include" make -C "$workspace" BUILD_DIR=/output "$target"
       ;;
     darwin-amd64)
       need_macos_sdk
       env \
         MACOS_SDK_PATH="$macos_sdk_dir" \
         MACOS_AMD64_LIB_PATH="-L$prefix/lib -I$prefix/include" \
-        make -C "$workspace" "$target"
+        make -C "$workspace" BUILD_DIR=/output "$target"
       ;;
     darwin-arm64)
       need_macos_sdk
       env \
         MACOS_SDK_PATH="$macos_sdk_dir" \
         MACOS_ARM64_LIB_PATH="-L$prefix/lib -I$prefix/include" \
-        make -C "$workspace" "$target"
+        make -C "$workspace" BUILD_DIR=/output "$target"
       ;;
     *)
       die "unsupported build target: $target"
@@ -174,7 +178,7 @@ run_make_target() {
 
 pure_test() {
   cd "$workspace"
-  go test ./config ./internal/beatport ./internal/validator
+  go test ./config ./internal/beatport ./internal/securefile ./internal/validator
 }
 
 full_test() {
@@ -227,7 +231,15 @@ EOF
 
 ensure_workspace
 
+record_tools() {
+  cat /opt/build-toolchain.txt > /output/build-tools-container.txt
+}
+
 command=${1:-usage}
+case "$command" in
+  usage|-h|--help|help|shell) ;;
+  *) record_tools ;;
+esac
 case "$command" in
   pure-test) pure_test ;;
   test) full_test ;;
@@ -238,3 +250,9 @@ case "$command" in
   usage|-h|--help|help) usage ;;
   *) die "unknown command: $command" ;;
 esac
+
+for artifact in /output/beatportdl-*; do
+  if [ -f "$artifact" ]; then
+    go version -m "$artifact" >> /output/build-tools-container.txt
+  fi
+done

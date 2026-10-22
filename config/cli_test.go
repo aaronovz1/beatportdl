@@ -149,6 +149,35 @@ func TestCommandLineErrorsAndHelp(t *testing.T) {
 	}
 }
 
+func TestTagMappingsRejectDuplicateAndTrailingDocuments(t *testing.T) {
+	for _, value := range []string{
+		"flac: {track_name: TITLE, track_name: ARTIST}",
+		"flac: {track_name: TITLE}\n---\nm4a: {track_name: TITLE}",
+	} {
+		if _, err := ParseCommandLine([]string{"--tag-mappings=" + value}, io.Discard); err == nil {
+			t.Errorf("accepted ambiguous mappings: %q", value)
+		}
+	}
+}
+
+func TestConfigLegacyBooleanAndRoundTripCompatibility(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(file, []byte("username: fixture\npassword: fixture\ndownloads_directory: /downloads\nkeep_cover: yes\nshow_progress: off\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Parse(file)
+	if err != nil || !cfg.KeepCover || cfg.ShowProgress {
+		t.Fatalf("legacy boolean values changed: %+v, %v", cfg, err)
+	}
+	if err := cfg.Save(file); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(file)
+	if err != nil || !reflect.DeepEqual(cfg, got) {
+		t.Fatalf("config round trip changed values: %v", err)
+	}
+}
+
 func TestCommandLineTagMappingsReplaceConfigMapping(t *testing.T) {
 	opts, err := ParseCommandLine([]string{`--tag-mappings={m4a: {track_bpm: BPM_raw}}`}, io.Discard)
 	if err != nil {

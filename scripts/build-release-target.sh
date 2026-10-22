@@ -35,7 +35,7 @@ case "$target" in
     extld="$cc"
     sdk_path=${MACOS_SDK_PATH:-$(xcrun --sdk macosx --show-sdk-path)}
     export SDKROOT="$sdk_path"
-    cgo_ldflags="-F${sdk_path}/System/Library/Frameworks -L${sdk_path}/usr/lib ${cgo_ldflags}"
+    cgo_ldflags="${cgo_ldflags} -F${sdk_path}/System/Library/Frameworks -L${sdk_path}/usr/lib"
     ;;
   darwin-amd64)
     goos=darwin
@@ -46,7 +46,7 @@ case "$target" in
     extld="$cc"
     sdk_path=${MACOS_SDK_PATH:-$(xcrun --sdk macosx --show-sdk-path)}
     export SDKROOT="$sdk_path"
-    cgo_ldflags="-F${sdk_path}/System/Library/Frameworks -L${sdk_path}/usr/lib ${cgo_ldflags}"
+    cgo_ldflags="${cgo_ldflags} -F${sdk_path}/System/Library/Frameworks -L${sdk_path}/usr/lib"
     ;;
   windows-amd64)
     goos=windows
@@ -83,7 +83,7 @@ env \
   CGO_CFLAGS="$cgo_cflags" \
   CGO_CXXFLAGS="$cgo_cxxflags" \
   CGO_LDFLAGS="$cgo_ldflags" \
-  go build "${buildmode_args[@]}" \
+  go build -trimpath -buildvcs=false -mod=vendor "${buildmode_args[@]}" \
     -ldflags "-w -linkmode external -extld=${extld} -extldflags '${extldflags}'" \
     -o "${build_dir}/${output_name}" \
     "$build_src"

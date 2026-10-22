@@ -20,22 +20,28 @@ TagLib_File *taglib_file_new_wide(const char *filename) {
     #endif
 }
 
-void taglib_set_item_mp4(TagLib_File *file, const char *key, const char *value) {
+int taglib_set_item_mp4(TagLib_File *file, const char *key, const char *value) {
     if(file == NULL || key == NULL || value == NULL)
-        return;
+        return 0;
     TagLib::MP4::File *mfile = dynamic_cast<TagLib::MP4::File *>(reinterpret_cast<TagLib::FileRef *>(file)->file());
+    if(mfile == NULL)
+        return 0;
     TagLib::MP4::Tag *tag = mfile->tag();
     if(tag) {
         TagLib::String tagKey(BASE_MP4_ATOM);
         tagKey.append(TagLib::String(key));
         tag->setItem(tagKey, TagLib::StringList(value));
+        return 1;
     }
+    return 0;
 }
 
 int taglib_strip_mp4(TagLib_File *file) {
     if(file == NULL)
         return 0;
     TagLib::MP4::File *mfile = dynamic_cast<TagLib::MP4::File *>(reinterpret_cast<TagLib::FileRef *>(file)->file());
+    if(mfile == NULL)
+        return 0;
     if(mfile->strip()) return 1;
     return 0;
 }

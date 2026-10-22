@@ -54,7 +54,7 @@ This will create a new `beatportdl-config.yml` file. You can put the following o
 | `password`                    |                                           | String     | Beatport password                                                                                                                                                                         |
 | `quality`                     | lossless                                  | String     | Download quality _(medium-hls, medium, high, lossless)_                                                                                                                                   |
 | `show_progress`               | true                                      | Boolean    | Enable progress bars                                                                                                                                                                      |
-| `write_error_log`             | false                                     | Boolean    | Write errors to `error.log`                                                                                                                                                               |
+| `write_error_log`             | false                                     | Boolean    | Write errors to `beatportdl-err.log`                                                                                                                                                               |
 | `max_download_workers`        | 15                                        | Integer    | Concurrent download jobs limit                                                                                                                                                            |
 | `max_global_workers`          | 15                                        | Integer    | Concurrent global jobs limit                                                                                                                                                              |
 | `downloads_directory`         |                                           | String     | Location for the downloads directory                                                                                                                                                      |
@@ -81,6 +81,14 @@ This will create a new `beatportdl-config.yml` file. You can put the following o
 
 If the Beatport credentials are correct, you should also see the file `beatportdl-credentials.json` appear in the BeatportDL directory.
 _If you accidentally entered an incorrect password and got an error, you can always manually edit the config file_
+
+Config, credentials, and error logs must be regular files in a location that
+other users cannot modify. Existing portable files are supported, but symlinks,
+hardlinks, shared writable parents, and unsafe access-control lists are rejected.
+Owned, broadly readable legacy files are replaced privately when loaded; their
+contents are preserved. Keep these files outside shared/cloud music directories.
+On Linux, the fallback locations are `$XDG_CONFIG_HOME/beatportdl` and
+`$XDG_STATE_HOME/beatportdl` (or their standard home-directory defaults).
 
 `whitespace_character` replaces spaces inside each filename or directory component. An empty value keeps spaces; safe replacements such as `_` and `-` are supported. Path separators, Windows-reserved filename characters and control characters are rejected in config files and CLI overrides. Define folder hierarchy with `/` in the directory template instead.
 
@@ -260,6 +268,8 @@ If the full test command fails with `fatal error: 'taglib/tag_c.h' file not foun
 
 The maintained fork now ships with a containerized builder so supported release builds do not depend on host-installed Zig, TagLib, or zlib.
 
+The Docker wrapper requires Git and Python 3 on the host to prepare an isolated source snapshot.
+
 Containerized release commands:
 
 ```shell
@@ -279,7 +289,13 @@ To cross-build Windows `amd64` locally without MSYS2 or host libraries:
 
 This produces `bin/beatportdl-windows-amd64.exe`. Containerized dependency builds use Zig's archive tools as well as its compilers, so foreign-target library indexes do not depend on the host's binutils.
 
-The builder image pins Zig, zlib, and TagLib inputs and verifies the Zig and zlib source checksums during image creation. TagLib is pinned to an exact signed release commit. The container does not fetch dependencies at runtime.
+The builder pins the Go image and Dockerfile frontend by digest, verifies Zig
+and zlib checksums, and checks TagLib's exact commit and pristine source tree.
+This verifies input identities, not the maintainer's cryptographic signature.
+Build scripts create a minimal source snapshot without local credentials or
+`.env`, mount it read-only, and write only to a separate output directory.
+Compilation and tests run without external networking or elevated capabilities.
+Docker is one isolation layer, not a guarantee against malicious build tools.
 
 GitHub Actions is now configured to validate release builds on every push and pull request with this split:
 
@@ -290,7 +306,11 @@ GitHub Actions is now configured to validate release builds on every push and pu
 
 CI also cross-builds Windows with Docker and checks its DLL imports to guard the local build path. Official Windows releases still use the native Windows runner.
 
-Tagged releases are published automatically by `.github/workflows/release.yml`, which packages the binaries and uploads a `SHA256SUMS` manifest with the release assets once the runner jobs pass.
+Tagged releases are published by `.github/workflows/release.yml` after tests and
+platform builds for the exact release commit pass. Release jobs use pinned
+actions and read-only build tokens; publication alone receives write authority.
+Assets include `SHA256SUMS`, dependency inventories, and GitHub provenance
+attestations. See [the release checklist](docs/RELEASE.md) for verification.
 
 macOS builds still require an Apple SDK because of Apple licensing. If you have one locally, mount it through `MACOS_SDK_PATH`:
 
@@ -308,9 +328,10 @@ make docker-release-core
 
 Host-managed build prerequisites, if you choose not to use Docker:
 
-- [TagLib](https://github.com/taglib/taglib) >= 2.0
-- [zlib](https://github.com/madler/zlib) >= 1.2.3
-- [Zig C/C++ Toolchain](https://github.com/ziglang/zig) >= 0.14.0
+- [Go](https://go.dev/dl/) 1.27.3
+- [TagLib](https://github.com/taglib/taglib) 2.3.2
+- [zlib](https://github.com/madler/zlib) 1.3.2
+- [Zig C/C++ Toolchain](https://github.com/ziglang/zig) 0.16.0 for container cross-builds
 
 BeatportDL uses [TagLib](https://taglib.org/) C bindings to handle audio metadata and therefore requires [CGO](https://go.dev/wiki/cgo)
 

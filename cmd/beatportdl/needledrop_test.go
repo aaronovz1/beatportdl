@@ -99,3 +99,35 @@ segment.ts
 		t.Fatalf("getStreamSegments() error = %q, want encryption key context", err)
 	}
 }
+
+func TestHLSResponseLimits(t *testing.T) {
+	for _, size := range []int{31, 32, 33} {
+		data, err := readHLSBody(strings.NewReader(strings.Repeat("x", size)), 32)
+		if size <= 32 && (err != nil || len(data) != size) {
+			t.Fatalf("size %d: data length %d, error %v", size, len(data), err)
+		}
+		if size > 32 && (err == nil || data != nil) {
+			t.Fatalf("oversized response accepted: %d, %v", len(data), err)
+		}
+	}
+}
+
+func TestMaintainedHLSParserResolvesResourceReferences(t *testing.T) {
+	var keyPath string
+	app := &application{mediaClient: &http.Client{Transport: segmentRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body := "0123456789abcdef"
+		if strings.HasSuffix(r.URL.Path, ".m3u8") {
+			body = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXT-X-KEY:METHOD=AES-128,URI=\"../key\",IV=0x00000000000000000000000000000000\n#EXTINF:10,\nhttps://cdn.example.test/audio.ts\n#EXT-X-ENDLIST\n"
+		} else {
+			keyPath = r.URL.String()
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: r}, nil
+	})}}
+	segments, key, err := app.getStreamSegments("https://example.test/hls/playlist.m3u8?signature=fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*segments) != 1 || (*segments)[0] != "https://cdn.example.test/audio.ts" || keyPath != "https://example.test/key" || len(key.Value) != 16 {
+		t.Fatalf("resource resolution failed: %v, %q, %v", segments, keyPath, key)
+	}
+}

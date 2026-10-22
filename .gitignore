@@ -7,6 +7,8 @@ temp/
 .gocache/
 .third_party/
 error.log
+beatportdl-err.log*
+__pycache__/
 beatportdl-credentials.json
 beatportdl-config.yml
 downloads/

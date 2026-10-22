@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unspok3n/beatportdl/config"
 	"unspok3n/beatportdl/internal/beatport"
+
+	"golang.org/x/term"
 )
 
 func Setup(overrides ...func(*config.AppConfig)) (cfg *config.AppConfig, cachePath string, err error) {
@@ -23,15 +25,24 @@ func Setup(overrides ...func(*config.AppConfig)) (cfg *config.AppConfig, cachePa
 		fmt.Print("Username: ")
 		username := GetLine()
 		fmt.Print("Password: ")
-		password := GetLine()
+		var password string
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			passwordBytes, readErr := term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Println()
+			if readErr != nil {
+				return nil, configFilePath, fmt.Errorf("read password: %w", readErr)
+			}
+			password = string(passwordBytes)
+		} else {
+			password = GetLine()
+		}
 		fmt.Print("Downloads directory: ")
 		downloadsDir := GetLine()
 
-		cfg := &config.AppConfig{
-			Username:           username,
-			Password:           password,
-			DownloadsDirectory: downloadsDir,
-		}
+		cfg := config.DefaultConfig()
+		cfg.Username = username
+		cfg.Password = password
+		cfg.DownloadsDirectory = downloadsDir
 
 		fmt.Println("1. Lossless (44.1 khz FLAC)\n2. High (256 kbps AAC)\n3. Medium (128 kbps AAC)\n4. Medium HLS (128 kbps AAC)")
 		for {

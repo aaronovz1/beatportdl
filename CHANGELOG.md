@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Sanitize release label names as single path components and enforce destination containment while preserving nested directory templates.
+- Store config, tokens, and error logs through trusted, private, atomic file operations. Reject unsafe links, shared writable locations, unexpected ownership, and unsafe ACLs; preserve portable lookup and safely tighten legacy owned files.
+- Remux HLS audio inside private staging directories and reject untrusted output locations. Keep overwrite-failure, cancellation, cover cleanup, and duplicate-detection behavior.
+- Return errors for MP4 operations on other native media types instead of dereferencing unchecked casts. Redact account secrets and signed URL values from console/error/panic logs, and disable terminal echo for password prompts.
+- Preserve explicit false, zero, and empty config values across YAML save/reload. Bound HLS response reads and resolve key/segment URL references correctly.
+- Reject Git replacement objects when validating native dependency caches. Prefer pinned native libraries over SDK libraries on macOS so the built binary uses the reviewed zlib version.
 - Defer empty-directory cleanup until all active URL workers finish, preventing a failed or completed URL from removing a folder another download still needs. Serialize final cleanup with new URL admission, drain it after cancellation/panic too, and remove requested empty children before parents. Preserve the configured download root (including path aliases), nonempty directories, regular files and symlinks. Temporary audio/cover cleanup remains immediate.
 - Reject malformed HTTP-success catalog metadata and collection pages instead of treating them as valid resources or empty results. Require positive resource IDs and explicit results arrays, validate collection item identities and pagination values, and reject trailing JSON. Preserve valid empty pages, optional/unknown metadata, HTTP errors and response-body cleanup.
 - Reject negative search-result selections instead of panicking, while preserving valid track/release selections and their requested order.
@@ -25,6 +31,8 @@
 
 ### Added
 
+- Credential permission/ownership/ACL, symlink/hardlink, atomic-write, private remux staging, malicious label, native format mismatch, log privacy, parser compatibility, and build supply-chain regressions.
+- A security reporting policy, automated dependency updates and vulnerability checks, immutable build/action pins, secret-free offline Docker builds, least-privilege release jobs, dependency inventories, and release provenance attestations.
 - Synchronized regressions for concurrent track URLs sharing a genre folder, cleanup after success/panic/cancellation, cancelled admission and fresh runs, nested empty directories, root aliases, completed files and symlinks.
 - Request-count regressions and a no-op playlist benchmark, plus coverage for shared release metadata across pages, fresh-run retries, server-selected formats, denied access, HLS skipping, filename fallbacks, release/genre directory layouts, metadata-failure cleanup and independent chart covers. Add 10,000-job scheduling regressions for bounded goroutines, cancellation, worker joins and panic recovery.
 - Catalog response regressions for missing/null/invalid metadata, malformed pages and playlist items, valid empty pages, pagination/result preservation, HTTP errors, read failures and response-body closure across all catalog metadata getters.
@@ -40,6 +48,7 @@
 
 ### Changed
 
+- Update Go to 1.27.3 and TagLib to 2.3.2. Move YAML and HLS parsing to maintained libraries, and update terminal/progress dependencies including the patched Windows syscall library. Keep zlib 1.3.2 and checksum-pinned Zig 0.16.0.
 - Reuse release metadata within each playlist/chart download. Under `track_exists: skip`, identity-matched files in the server-selected audio format skip additional release/full-track lookups where the destination is already known. Keep per-track subscription/access and format checks, filename fallback and full-track numbering; do not reuse media URLs across tracks or runs. Only fetch the first track's genre when a directory template uses `{first_genre}`. Defer directory cleanup until all sibling workers finish and preserve chart covers when release-cover requests fail.
 - Apply backpressure before spawning URL/download workers so large collections no longer create a waiting goroutine for every queued item. Worker limits, cancellation and error-path joins remain enforced.
 - Reject old Beatsource URLs and `@beatsource` queries with migration guidance instead of silently treating them as Beatport resources. Use migrated Beatport URLs; existing config, credentials, and downloaded files are left unchanged.

@@ -1,122 +1,215 @@
 name: CI
 
 on:
-  pull_request:
+  pull_request: {}
+
   push:
     branches:
       - main
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+permissions:
+
+  contents: read
 
 jobs:
+
+  build-policy:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: "${{ github.sha }}"
+          persist-credentials: false
+
+      - name: Set up Go 1.27.3
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache: false
+
+      - name: Validate workflows and build shell scripts
+        run: |
+          set -euo pipefail
+          tools="$(mktemp -d)"
+          trap 'rm -rf "$tools"' EXIT
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o "$tools/actionlint.tar.gz"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $tools/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$tools/actionlint.tar.gz" -C "$tools" actionlint
+          "$tools/actionlint"
+          shellcheck scripts/docker-build.sh scripts/docker-builder-entrypoint.sh scripts/build-release-deps.sh scripts/build-release-target.sh
+
+      - name: Build policy regressions and shell syntax
+        run: |
+          python3 -m unittest discover -s scripts/tests -v
+          for script in scripts/*.sh; do
+            case "$script" in
+              *build-release-*) bash -n "$script" ;;
+              *) sh -n "$script" ;;
+            esac
+          done
+
   dockerized-tests:
     name: Dockerized tests
     runs-on: ubuntu-latest
+    needs: build-policy
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
 
-      - name: Build pinned builder image
-        run: docker build -f Dockerfile.build -t beatportdl-builder:ci .
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: "${{ github.sha }}"
+          persist-credentials: false
 
-      - name: Run full test suite in container
-        run: docker run --rm -v "$PWD:/workspace" beatportdl-builder:ci test
+      - name: Run full test suite in isolated container
+        run: |
+          DOCKER_IMAGE=beatportdl-builder:ci ./scripts/docker-build.sh test
 
   dockerized-builds:
     name: Dockerized cross-builds
     runs-on: ubuntu-latest
     needs: dockerized-tests
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
 
-      - name: Build pinned builder image
-        run: docker build -f Dockerfile.build -t beatportdl-builder:ci .
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: "${{ github.sha }}"
+          persist-credentials: false
 
-      - name: Build supported Linux release artifacts in container
-        run: docker run --rm -v "$PWD:/workspace" beatportdl-builder:ci release-core
+      - name: Build Linux release targets
+        run: |
+          DOCKER_IMAGE=beatportdl-builder:ci ./scripts/docker-build.sh release-core
 
-      - name: Cross-build Windows artifact in container
-        run: docker run --rm -v "$PWD:/workspace" beatportdl-builder:ci windows-amd64
+      - name: Cross-build Windows
+        run: |
+          DOCKER_IMAGE=beatportdl-builder:ci ./scripts/docker-build.sh windows-amd64
 
-      - name: Verify cross-built Windows runtime dependencies
-        run: ./scripts/check-windows-runtime-deps.sh bin/beatportdl-windows-amd64.exe
+      - name: Verify Windows runtime dependencies
+        run: |
+          ./scripts/check-windows-runtime-deps.sh bin/beatportdl-windows-amd64.exe
 
   macos-amd64-build:
-    name: macOS amd64 native build
+    name: darwin-amd64 native build
     runs-on: macos-15-intel
+    needs: build-policy
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
+          ref: "${{ github.sha }}"
+          persist-credentials: false
+
+      - name: Set up Go 1.27.3
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache: false
 
       - name: Install native build tools
-        run: brew install cmake ninja
+        run: |
+          brew install cmake ninja
 
-      - name: Build pinned macOS amd64 dependencies
-        run: ./scripts/build-release-deps.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
+      - name: Build pinned native dependencies
+        shell: bash
+        run: |
+          ./scripts/build-release-deps.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
 
-      - name: Build macOS amd64 artifact
-        run: ./scripts/build-release-target.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
+      - name: Build native artifact
+        shell: bash
+        run: |
+          ./scripts/build-release-target.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
 
   macos-arm64-build:
-    name: macOS arm64 native build
+    name: darwin-arm64 native build
     runs-on: macos-15
+    needs: build-policy
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
+          ref: "${{ github.sha }}"
+          persist-credentials: false
+
+      - name: Set up Go 1.27.3
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache: false
 
       - name: Install native build tools
-        run: brew install cmake ninja
+        run: |
+          brew install cmake ninja
 
-      - name: Build pinned macOS arm64 dependencies
-        run: ./scripts/build-release-deps.sh darwin-arm64 "$RUNNER_TEMP/deps/darwin-arm64"
+      - name: Build pinned native dependencies
+        shell: bash
+        run: |
+          ./scripts/build-release-deps.sh darwin-arm64 "$RUNNER_TEMP/deps/darwin-arm64"
 
-      - name: Build macOS arm64 artifact
-        run: ./scripts/build-release-target.sh darwin-arm64 "$RUNNER_TEMP/deps/darwin-arm64"
+      - name: Check Go vulnerabilities
+        env:
+          GOTOOLCHAIN: local
+          GOBIN: ${{ runner.temp }}/security-tools
+          GOVULNDB: https://vuln.go.dev
+          CGO_ENABLED: "1"
+          CGO_CPPFLAGS: -I${{ runner.temp }}/deps/darwin-arm64/include
+          CGO_LDFLAGS: -L${{ runner.temp }}/deps/darwin-arm64/lib
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$GOBIN/govulncheck" ./...
+
+      - name: Build native artifact
+        shell: bash
+        run: |
+          ./scripts/build-release-target.sh darwin-arm64 "$RUNNER_TEMP/deps/darwin-arm64"
 
   windows-amd64-build:
-    name: Windows amd64 native build
+    name: windows-amd64 native build
     runs-on: windows-2022
+    needs: build-policy
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
+          ref: "${{ github.sha }}"
+          persist-credentials: false
+
+      - name: Set up Go 1.27.3
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.3
+          cache: false
 
       - name: Set up MSYS2
-        uses: msys2/setup-msys2@v2
+        uses: "msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e"
         with:
           msystem: MINGW64
           update: true
           path-type: inherit
-          install: >-
-            git
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-ninja
+          install: git python mingw-w64-x86_64-cmake mingw-w64-x86_64-gcc mingw-w64-x86_64-ninja
 
-      - name: Build pinned Windows dependencies
-        shell: msys2 {0}
-        run: ./scripts/build-release-deps.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
+      - name: Run Windows filesystem and pure-Go regressions
+        shell: "msys2 {0}"
+        run: |
+          GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test -mod=vendor ./internal/securefile ./config ./internal/beatport ./internal/validator
 
-      - name: Build Windows artifact
-        shell: msys2 {0}
-        run: ./scripts/build-release-target.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
+      - name: Build pinned native dependencies
+        shell: "msys2 {0}"
+        run: |
+          ./scripts/build-release-deps.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
+
+      - name: Build native artifact
+        shell: "msys2 {0}"
+        run: |
+          ./scripts/build-release-target.sh windows-amd64 "$RUNNER_TEMP/deps/windows-amd64"
 
       - name: Verify Windows runtime dependencies
-        shell: msys2 {0}
-        run: ./scripts/check-windows-runtime-deps.sh bin/beatportdl-windows-amd64.exe
+        shell: "msys2 {0}"
+        run: |
+          ./scripts/check-windows-runtime-deps.sh bin/beatportdl-windows-amd64.exe
