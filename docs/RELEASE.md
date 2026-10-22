@@ -47,12 +47,18 @@ This fork keeps the `beatportdl` name and publishes maintained-fork releases fro
    ./scripts/docker-build.sh release-core
    ```
 
-7. Build macOS release artifacts if you have a locally licensed Apple SDK:
+7. Prefer native macOS builds matching the release runners. On an arm64 Mac:
 
    ```shell
-   MACOS_SDK_PATH=/path/to/MacOSX.sdk ./scripts/docker-build.sh darwin-amd64
-   MACOS_SDK_PATH=/path/to/MacOSX.sdk ./scripts/docker-build.sh darwin-arm64
+   ./scripts/build-release-deps.sh darwin-arm64 "$PWD/.third_party/deps/darwin-arm64"
+   ./scripts/build-release-target.sh darwin-arm64 "$PWD/.third_party/deps/darwin-arm64"
+   codesign --verify --strict bin/beatportdl-darwin-arm64
    ```
+
+   Use `darwin-amd64` on an Intel Mac. Intel cross-builds on arm64 and local
+   Windows cross-builds must be identified as such; the release workflow still
+   uses native macOS and Windows runners. Inspect signatures and runtime library
+   dependencies after extracting the archives, not just before packaging.
 
 8. If Docker is unavailable, the equivalent host-managed smoke checks are:
 
@@ -182,11 +188,27 @@ provenance attestations bind those assets to this workflow; they do not replace
 upstream signature verification, independent review, or macOS code signing/
 notarization. No new signing or notarization infrastructure is required here.
 
-## v1.0.8 Candidate Notes
+## Non-Publishing Preflight
 
-Include these highlights if present in the release:
+Keep candidate packages separate from normal build outputs. Verify each archive
+contains exactly its expected executable, preserves executable permissions where
+applicable, and extracts byte-for-byte to the inspected build artifact. Check
+architectures, Windows runtime DLL imports, macOS signatures and dynamic library
+dependencies, tool inventories, dependency SBOMs, and the checksum manifest.
 
-- Maintained fork documentation and support policy.
-- Upstream PR #100: playlist/chart `first_genre` uses the first listed track genre.
-- Upstream PR #123: default M4A BPM tag mapping writes through `BPM_raw`.
-- Dockerized Linux CI plus native macOS and Windows release publishing through GitHub Actions.
+CI build jobs do not currently upload release packages. Locally cross-built
+Windows or Intel macOS candidates are useful checks, but are not substitutes for
+the native release-runner artifacts. Native Windows tests must pass separately.
+Local checks cannot issue the GitHub workflow's OIDC provenance attestations.
+
+Generate draft notes without creating a tag:
+
+```shell
+./scripts/release-notes.sh vX.Y.Z
+```
+
+Review the entire commit range since the last release against the changelog,
+including upgrade behavior and any intentionally removed support. Use generic
+examples without personal playlist names or filesystem paths. Keep unreleased
+candidate headings undated until publication is authorized. Do not dispatch the
+release workflow for a dry run: its final job publishes.

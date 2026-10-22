@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v1.2.0 - 2026-10-22
+
+This release focuses on safer downloads, reliable playlist updates, bounded background work, and hardened builds. It also completes the removal of standalone Beatsource support.
+
+### Upgrade Notes
+
+- Beatport is now the only supported service. Use migrated Beatport URLs instead of Beatsource URLs or `@beatsource` searches. Existing downloads are not moved automatically.
+- Config, credential, and error-log files must be regular files owned by your account in trusted locations. Unsafe links, shared-writable locations, and unsafe Windows ACLs are rejected with an error. Owned legacy files with broad read permissions are tightened safely; back up configuration before upgrading if you use an unusual shared-directory setup.
+- Existing config options and command-line overrides remain supported. Explicit false, zero, and empty values now survive config save/reload correctly. Invalid path replacement values are rejected instead of being used in filenames.
+- Existing-file detection still depends on embedded track identity, audio format, and the configured destination. Renamed matching files in that destination are reused; other directories are not searched recursively.
+- FFmpeg is still required for HLS downloads, but not for direct FLAC/M4A downloads. Container validation catches empty or structurally invalid downloads; it is not a full audio decode or a guarantee of player compatibility.
+- macOS downloads are not Developer ID signed or notarized; Gatekeeper may require approval even when an ad-hoc code signature is valid. Downloaded binaries do not require Go, TagLib, or zlib to be installed; source builds now use Go 1.27.3 and TagLib 2.3.2.
+
 ### Fixed
 
 - Sanitize release label names as single path components and enforce destination containment while preserving nested directory templates.
