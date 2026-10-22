@@ -251,6 +251,21 @@ jobs:
           go-version: 1.27.3
           cache: false
 
+      - name: Run Windows filesystem and pure-Go regressions
+        shell: pwsh
+        env:
+          GOTOOLCHAIN: local
+          GOPROXY: "off"
+          GOSUMDB: "off"
+        run: |
+          $directory = [IO.Path]::GetTempPath()
+          while ($directory) {
+            $acl = Get-Acl -LiteralPath $directory
+            Write-Host ("Temp ancestor {0}: {1}" -f $directory, $acl.Sddl)
+            $directory = Split-Path -Parent $directory.TrimEnd('\')
+          }
+          go test -count=1 -v -mod=vendor ./internal/securefile ./config ./internal/beatport ./internal/validator
+
       - name: Set up MSYS2
         uses: "msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e"
         with:
@@ -258,11 +273,6 @@ jobs:
           update: true
           path-type: inherit
           install: git python mingw-w64-x86_64-cmake mingw-w64-x86_64-gcc mingw-w64-x86_64-ninja
-
-      - name: Run Windows filesystem and pure-Go regressions
-        shell: "msys2 {0}"
-        run: |
-          GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test -mod=vendor ./internal/securefile ./config ./internal/beatport ./internal/validator
 
       - name: Build pinned native dependencies
         shell: "msys2 {0}"

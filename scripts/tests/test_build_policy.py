@@ -384,7 +384,15 @@ class ImmutablePins(unittest.TestCase):
             self.assertTrue(tests, filename + " must execute Windows tests, not only cross-compile")
             for package in ("./internal/securefile", "./config", "./internal/beatport", "./internal/validator"):
                 self.assertTrue(any(package in step["run"] for step in tests), package)
-            self.assertTrue(all(step["shell"] == "msys2 {0}" for step in tests))
+            self.assertTrue(all(step["shell"] == "pwsh" for step in tests))
+            msys_index = next(index for index, step in enumerate(job["steps"])
+                              if step.get("uses", "").startswith("msys2/setup-msys2@"))
+            for step in tests:
+                self.assertLess(job["steps"].index(step), msys_index,
+                                "native tests must not inherit MSYS2 temporary paths")
+                self.assertEqual(step["env"]["GOTOOLCHAIN"], "local")
+                self.assertEqual(step["env"]["GOPROXY"], "off")
+                self.assertEqual(step["env"]["GOSUMDB"], "off")
 
     def test_native_arm64_vulnerability_scan_is_a_required_gate(self):
         for filename, name in (("ci.yml", "macos-arm64-build"), ("release.yml", "macos-arm64-release")):

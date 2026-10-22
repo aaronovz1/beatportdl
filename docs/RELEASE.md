@@ -166,7 +166,9 @@ this is Go vulnerability analysis, not a scan of native TagLib/zlib source.
 
 The Windows 2022 CI and release jobs execute the securefile, config, Beatport,
 and validator tests natively before packaging, including Windows DACL/reparse
-regressions. Cross-compilation or a macOS/Linux pass is not evidence that those
+regressions. They run in PowerShell before MSYS2 setup so test fixtures use the
+native Windows temporary directory, not MSYS2's installation-owned temp tree.
+Cross-compilation or a macOS/Linux pass is not evidence that those
 Windows-specific tests pass.
 
 Each platform uploads toolchain/native-dependency versions and embedded Go
