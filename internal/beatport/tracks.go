@@ -83,7 +83,9 @@ func (t *Track) Filename(n NamingPreferences) string {
 		"label":               SanitizeForPath(t.Release.Label.Name),
 	}
 	fileName := ParseTemplate(n.Template, templateValues)
-	return SanitizePath(fileName, n.Whitespace)
+	// Leave room for the longest supported audio extension. Reservation
+	// applies a smaller budget when it needs to add a collision marker.
+	return sanitizePath(fileName, n.Whitespace, maxPathComponentBytes-len(".flac"))
 }
 
 func (b *Beatport) GetTrack(id int64) (*Track, error) {

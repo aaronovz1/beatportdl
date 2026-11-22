@@ -157,6 +157,9 @@ func Parse(filePath string, overrides ...func(*AppConfig)) (*AppConfig, error) {
 	if !validator.SafePathReplacement(config.WhitespaceCharacter) {
 		return nil, fmt.Errorf("whitespace_character must not contain path separators, reserved filename characters, or control characters")
 	}
+	if _, err := config.ProxyURL(); err != nil {
+		return nil, err
+	}
 
 	return &config, nil
 }

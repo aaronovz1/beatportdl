@@ -2,11 +2,9 @@ package beatport
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"net/http"
 	"net/url"
 	"sync"
@@ -24,7 +22,8 @@ const (
 var (
 	ErrInvalidAuthorizationCode = errors.New("invalid authorization code")
 	ErrInvalidSessionCookie     = errors.New("invalid session cookie")
-	ErrLoginIDMismatch          = errors.New("login id does not match")
+	ErrCacheAccountMismatch     = errors.New("token cache account does not match")
+	ErrLegacyTokenCache         = errors.New("legacy token cache requires reauthentication")
 )
 
 type Auth struct {
@@ -49,8 +48,12 @@ type tokenPair struct {
 	ExpiresIn    int64  `json:"expires_in"`
 	TokenType    string `json:"token_type"`
 	Scope        string `json:"scope"`
-	LoginID      string `json:"login_id"`
 	IssuedAt     int64  `json:"issued_at"`
+}
+
+type cachedToken struct {
+	tokenPair
+	Account string `json:"account"`
 }
 
 func NewAuth(username, password, cacheFile string) *Auth {
@@ -72,20 +75,31 @@ func (a *Auth) LoadCache() error {
 		return fmt.Errorf("failed to read token file: %w", err)
 	}
 
-	var loadedToken tokenPair
-	if err := json.Unmarshal(data, &loadedToken); err != nil {
-		return fmt.Errorf("failed to unmarshal token data: %w", err)
+	var cached struct {
+		cachedToken
+		Legacy json.RawMessage `json:"login_id"`
 	}
-
-	if loadedToken.LoginID != a.loginId() {
-		return ErrLoginIDMismatch
+	decodeErr := json.Unmarshal(data, &cached)
+	if cached.Legacy != nil {
+		// A legacy fingerprint cannot establish account ownership without the
+		// password. Discard both tokens and the fingerprint before reauthenticating.
+		if err := securefile.Write(a.cacheFile, []byte("{}")); err != nil {
+			return fmt.Errorf("%w: could not clear token cache: %w", ErrLegacyTokenCache, err)
+		}
+		return ErrLegacyTokenCache
 	}
-	if loadedToken.AccessToken == "" {
+	if decodeErr != nil {
+		return errors.New("invalid token cache JSON")
+	}
+	if cached.Account == "" || cached.Account != a.username {
+		return ErrCacheAccountMismatch
+	}
+	if cached.AccessToken == "" {
 		return errors.New("cached token has no access token")
 	}
 
 	a.mutex.Lock()
-	a.tokenPair = &loadedToken
+	a.tokenPair = &cached.tokenPair
 	a.mutex.Unlock()
 
 	return nil
@@ -103,7 +117,7 @@ func (a *Auth) writeCache(token *tokenPair) error {
 	if token == nil {
 		return errors.New("no token to cache")
 	}
-	data, err := json.MarshalIndent(token, "", " ")
+	data, err := json.MarshalIndent(cachedToken{tokenPair: *token, Account: a.username}, "", " ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal tokenPair: %w", err)
 	}
@@ -293,14 +307,13 @@ func (a *Auth) refresh(inst *Beatport) (*tokenPair, error) {
 	}
 	defer res.Body.Close()
 	response := &tokenPair{}
-	if err = json.NewDecoder(res.Body).Decode(response); err != nil {
+	if err = decodeTokenJSON(res.Body, response); err != nil {
 		return nil, err
 	}
 	if response.AccessToken == "" {
 		return nil, errors.New("token response has no access token")
 	}
 	response.IssuedAt = time.Now().Unix()
-	response.LoginID = token.LoginID
 	a.mutex.Lock()
 	a.tokenPair = response
 	a.mutex.Unlock()
@@ -331,14 +344,13 @@ func (a *Auth) issue(inst *Beatport, code string) error {
 	}
 	defer res.Body.Close()
 	response := &tokenPair{}
-	if err = json.NewDecoder(res.Body).Decode(response); err != nil {
+	if err = decodeTokenJSON(res.Body, response); err != nil {
 		return err
 	}
 	if response.AccessToken == "" {
 		return errors.New("token response has no access token")
 	}
 	response.IssuedAt = time.Now().Unix()
-	response.LoginID = a.loginId()
 	a.mutex.Lock()
 	a.tokenPair = response
 	a.mutex.Unlock()
@@ -362,7 +374,7 @@ func (a *Auth) authorize(inst *Beatport, sessionId string) (string, error) {
 	redirectUrl := res.Header.Get("Location")
 	parsedUrl, err := url.Parse(redirectUrl)
 	if err != nil {
-		return "", err
+		return "", ErrInvalidAuthorizationCode
 	}
 
 	query, _ := url.ParseQuery(parsedUrl.RawQuery)
@@ -392,12 +404,4 @@ func (a *Auth) login(inst *Beatport) (string, error) {
 		}
 	}
 	return "", ErrInvalidSessionCookie
-}
-
-func (a *Auth) loginId() string {
-	hash := fnv.New64a()
-	data := fmt.Sprintf("%s:%s", a.username, a.password)
-	hash.Write([]byte(data))
-	hashBytes := hash.Sum(nil)
-	return hex.EncodeToString(hashBytes)
 }

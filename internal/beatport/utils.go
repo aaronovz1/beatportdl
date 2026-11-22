@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 	"unspok3n/beatportdl/internal/validator"
 )
 
@@ -63,31 +64,41 @@ var pathUnsafeReplacer = strings.NewReplacer(
 )
 
 var windowsReservedPathNames = map[string]struct{}{
-	"CON":  {},
-	"PRN":  {},
-	"AUX":  {},
-	"NUL":  {},
-	"COM1": {},
-	"COM2": {},
-	"COM3": {},
-	"COM4": {},
-	"COM5": {},
-	"COM6": {},
-	"COM7": {},
-	"COM8": {},
-	"COM9": {},
-	"LPT1": {},
-	"LPT2": {},
-	"LPT3": {},
-	"LPT4": {},
-	"LPT5": {},
-	"LPT6": {},
-	"LPT7": {},
-	"LPT8": {},
-	"LPT9": {},
+	"CON":       {},
+	"CONIN$":    {},
+	"CONOUT$":   {},
+	"PRN":       {},
+	"AUX":       {},
+	"NUL":       {},
+	"COM1":      {},
+	"COM2":      {},
+	"COM3":      {},
+	"COM4":      {},
+	"COM5":      {},
+	"COM6":      {},
+	"COM7":      {},
+	"COM8":      {},
+	"COM9":      {},
+	"LPT1":      {},
+	"LPT2":      {},
+	"LPT3":      {},
+	"LPT4":      {},
+	"LPT5":      {},
+	"LPT6":      {},
+	"LPT7":      {},
+	"LPT8":      {},
+	"LPT9":      {},
+	"COM\u00b9": {},
+	"COM\u00b2": {},
+	"COM\u00b3": {},
+	"LPT\u00b9": {},
+	"LPT\u00b2": {},
+	"LPT\u00b3": {},
 }
 
-func sanitizePathComponent(name string) string {
+const maxPathComponentBytes = 255
+
+func cleanPathComponent(name string) string {
 	name = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
@@ -98,45 +109,75 @@ func sanitizePathComponent(name string) string {
 	name = pathUnsafeReplacer.Replace(name)
 	name = strings.Join(strings.Fields(name), " ")
 
-	if name == "" {
-		return "_"
-	}
-
 	if name == "." || name == ".." {
 		name = strings.ReplaceAll(name, ".", "．")
 	}
+	return trimPathComponent(name)
+}
 
-	name = strings.TrimRightFunc(name, func(r rune) bool {
+func trimPathComponent(name string) string {
+	return strings.TrimRightFunc(name, func(r rune) bool {
 		return unicode.IsSpace(r) || r == '.'
 	})
+}
+
+func truncatePathComponent(name string, limit int) string {
+	if len(name) > limit {
+		for !utf8.RuneStart(name[limit]) {
+			limit--
+		}
+		name = name[:limit]
+	}
+	return trimPathComponent(name)
+}
+
+func safePathBasename(name string, limit int) string {
+	name = truncatePathComponent(name, limit)
 	if name == "" {
 		return "_"
 	}
 
-	if _, reserved := windowsReservedPathNames[strings.ToUpper(name)]; reserved {
-		name += "_"
+	base, rest, hasExtension := strings.Cut(name, ".")
+	base = strings.TrimRight(base, " ")
+	if _, reserved := windowsReservedPathNames[strings.ToUpper(base)]; reserved {
+		name = base + "_"
+		if hasExtension {
+			name += "." + rest
+		}
+		return truncatePathComponent(name, limit)
 	}
-
 	return name
 }
 
 func SanitizeForPath(s string) string {
-	return sanitizePathComponent(s)
+	// Template fields are not limited independently of the rendered component.
+	name := cleanPathComponent(s)
+	return safePathBasename(name, len(name)+1)
 }
 
 func SanitizePath(name string, whitespace string) string {
-	if len(name) > 250 {
-		name = name[:250]
-	}
+	return sanitizePath(name, whitespace, maxPathComponentBytes)
+}
 
-	name = sanitizePathComponent(name)
+func sanitizePath(name, whitespace string, limit int) string {
+	name = cleanPathComponent(name)
 	if whitespace != "" {
 		name = strings.ReplaceAll(name, " ", whitespace)
+		if !validator.SafePathReplacement(whitespace) {
+			name = cleanPathComponent(name)
+		}
 	}
-	if !validator.SafePathReplacement(whitespace) {
-		return sanitizePathComponent(name)
+	name = strings.ToValidUTF8(name, "\ufffd")
+	if name == "." || name == ".." {
+		name = strings.ReplaceAll(name, ".", "．")
 	}
-	return name
+	return safePathBasename(name, limit)
+}
+
+// FitTrackFilename budgets space for the generated collision marker and audio
+// extension without applying whitespace preferences to them.
+func FitTrackFilename(stem, suffix string) string {
+	return safePathBasename(stem, maxPathComponentBytes-len(suffix)) + suffix
 }
 
 func SanitizeDirectoryPath(name string, whitespace string) string {

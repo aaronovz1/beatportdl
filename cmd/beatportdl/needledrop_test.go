@@ -131,3 +131,34 @@ func TestMaintainedHLSParserResolvesResourceReferences(t *testing.T) {
 		t.Fatalf("resource resolution failed: %v, %q, %v", segments, keyPath, key)
 	}
 }
+
+func TestHLSResourcesResolveAgainstRedirectedManifest(t *testing.T) {
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/new/manifest.m3u8":
+			fmt.Fprint(w, "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXT-X-KEY:METHOD=AES-128,URI=\"key\",IV=0x00000000000000000000000000000000\n#EXTINF:10,\nsegment.ts\n#EXT-X-ENDLIST\n")
+		case "/new/key":
+			fmt.Fprint(w, "0123456789abcdef")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer cdn.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/old/manifest.m3u8" {
+			http.Redirect(w, r, cdn.URL+"/new/manifest.m3u8", http.StatusFound)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer origin.Close()
+
+	app := &application{}
+	segments, key, err := app.getStreamSegments(origin.URL + "/old/manifest.m3u8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*segments) != 1 || (*segments)[0] != cdn.URL+"/new/segment.ts" || string(key.Value) != "0123456789abcdef" {
+		t.Fatalf("resources resolved incorrectly: segments=%v key=%v", *segments, key)
+	}
+}

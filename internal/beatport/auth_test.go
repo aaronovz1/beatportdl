@@ -75,7 +75,7 @@ func TestConcurrentAuthFailuresShareRenewalResult(t *testing.T) {
 					if !errors.Is(err, context.DeadlineExceeded) {
 						t.Errorf("renewal error = %v, want shared transport timeout", err)
 					}
-				} else if !errors.As(err, &apiErr) || apiErr.Detail != "login rejected" {
+				} else if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized || apiErr.Endpoint != loginEndpoint {
 					t.Errorf("renewal error = %v, want shared login rejection", err)
 				}
 			}
@@ -190,8 +190,8 @@ func authTestClient(t *testing.T, transport roundTripFunc) *Beatport {
 		},
 	})
 	inst.auth.cacheFile = filepath.Join(t.TempDir(), "tokens.json")
+	inst.auth.username = "synthetic-account"
 	inst.auth.tokenPair.RefreshToken = "test-refresh"
-	inst.auth.tokenPair.LoginID = inst.auth.loginId()
 	return inst
 }
 
@@ -290,13 +290,13 @@ func TestAuthEndpointsDoNotRefreshOnUnauthorized(t *testing.T) {
 			var body *authResponseBody
 			inst := authTestClient(t, func(req *http.Request) (*http.Response, error) {
 				calls++
-				res := authTestResponse(req, 401, `{"error":"auth denied"}`)
+				res := authTestResponse(req, 401, `{"error":"synthetic-response-marker"}`)
 				body = res.Body.(*authResponseBody)
 				return res, nil
 			})
 			_, err := inst.fetch(http.MethodPost, endpoint, nil, "")
 			var apiErr *APIError
-			if !errors.As(err, &apiErr) || apiErr.Detail != "auth denied" || apiErr.Endpoint != endpoint || calls != 1 {
+			if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized || apiErr.Detail != "" || apiErr.Endpoint != endpoint || calls != 1 {
 				t.Errorf("fetch() = %v after %d calls, want original auth error after one call", err, calls)
 			}
 			if !body.closed.Load() {
@@ -436,12 +436,12 @@ func TestConcurrentFetchAndTokenUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cached tokenPair
+	var cached cachedToken
 	if err := json.Unmarshal(data, &cached); err != nil {
 		t.Fatal(err)
 	}
-	if cached.AccessToken != "new-token" || cached.LoginID != inst.auth.loginId() {
-		t.Errorf("cached token = %+v", cached)
+	if cached.AccessToken != "new-token" || cached.Account != inst.auth.username {
+		t.Error("refresh did not persist the token with the configured account binding")
 	}
 }
 
@@ -597,11 +597,11 @@ func TestMissingOrRejectedTokenInitializesAndCaches(t *testing.T) {
 					t.Error("fallback login or catalog left a response body open")
 				}
 			}
-			loaded := NewAuth("", "", inst.auth.cacheFile)
+			loaded := NewAuth(inst.auth.username, "", inst.auth.cacheFile)
 			if err := loaded.LoadCache(); err != nil {
 				t.Fatal(err)
 			}
-			if token := loaded.snapshot(); token.AccessToken != "issued-token" || token.RefreshToken != "issued-refresh" || token.LoginID != inst.auth.loginId() || token.IssuedAt == 0 {
+			if token := loaded.snapshot(); token.AccessToken != "issued-token" || token.RefreshToken != "issued-refresh" || token.IssuedAt == 0 {
 				t.Errorf("cached issued token = %+v", token)
 			}
 		})
@@ -643,7 +643,7 @@ func TestConcurrentCacheAndTokenOperations(t *testing.T) {
 }
 
 func TestMalformedTokenResponseDoesNotReplaceExistingToken(t *testing.T) {
-	for _, payload := range []string{"null", "{}", "not json"} {
+	for _, payload := range []string{"null", "{}", "not json", `{"access_token":"synthetic-token"} {}`} {
 		for _, operation := range []string{"refresh", "issue"} {
 			t.Run(operation+"/"+payload, func(t *testing.T) {
 				var body *authResponseBody
@@ -669,5 +669,41 @@ func TestMalformedTokenResponseDoesNotReplaceExistingToken(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestTokenJSONLimitDoesNotPublishTokens(t *testing.T) {
+	const marker = "synthetic-response-marker"
+	for _, operation := range []string{"issue", "refresh"} {
+		t.Run(operation, func(t *testing.T) {
+			var body *authResponseBody
+			inst := authTestClient(t, func(req *http.Request) (*http.Response, error) {
+				body = &authResponseBody{Reader: io.MultiReader(
+					strings.NewReader(`{"access_token":"`+marker+`"}`),
+					strings.NewReader(strings.Repeat(" ", maxSmallJSONBytes)),
+				)}
+				return &http.Response{StatusCode: http.StatusOK, Body: body, ContentLength: -1, Request: req}, nil
+			})
+			original := inst.auth.snapshot()
+			if err := inst.auth.WriteCache(); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if operation == "refresh" {
+				_, err = inst.auth.refresh(inst)
+			} else {
+				err = inst.auth.issue(inst, "synthetic-code")
+			}
+			if !errors.Is(err, ErrResponseTooLarge) || strings.Contains(err.Error(), marker) {
+				t.Fatalf("unexpected token response error: %v", err)
+			}
+			if !body.closed.Load() || inst.auth.snapshot() != original {
+				t.Error("oversized response was not closed or replaced the current token")
+			}
+			loaded := NewAuth(inst.auth.username, "", inst.auth.cacheFile)
+			if err := loaded.LoadCache(); err != nil || loaded.snapshot().AccessToken != original.AccessToken {
+				t.Fatalf("oversized response changed the cache: %v", err)
+			}
+		})
 	}
 }

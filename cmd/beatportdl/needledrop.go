@@ -25,6 +25,8 @@ const (
 	maxHLSManifestBytes = 1024 * 1024
 	maxHLSSegmentBytes  = 64 * 1024 * 1024
 	maxHLSKeyBytes      = 32
+	ffmpegFileTimeout   = 10 * time.Minute
+	maxFFmpegDiagnostic = 32 * 1024
 )
 
 func readHLSBody(reader io.Reader, limit int64) ([]byte, error) {
@@ -64,16 +66,16 @@ func (app *application) getStreamSegments(stream string) (*[]string, *StreamKey,
 	if !ok {
 		return nil, nil, fmt.Errorf("stream playlist is not a media playlist")
 	}
-	u, err := url.Parse(stream)
-	if err != nil {
-		return nil, nil, err
+	if resp.Request == nil || resp.Request.URL == nil {
+		return nil, nil, errors.New("stream response is missing the manifest URL")
 	}
+	baseURL := resp.Request.URL
 	resolve := func(reference string) (string, error) {
 		child, err := url.Parse(reference)
 		if err != nil {
 			return "", err
 		}
-		resolved := u.ResolveReference(child)
+		resolved := baseURL.ResolveReference(child)
 		if resolved.Scheme != "https" && resolved.Scheme != "http" || resolved.Host == "" || resolved.User != nil {
 			return "", errors.New("invalid HLS resource URL")
 		}
@@ -154,18 +156,17 @@ func decryptSegment(segment []byte, key StreamKey) ([]byte, error) {
 		return nil, fmt.Errorf("invalid encrypted segment length: %d bytes", len(segment))
 	}
 	cbc := cipher.NewCBCDecrypter(block, key.IV)
-	decrypted := make([]byte, len(segment))
-	cbc.CryptBlocks(decrypted, segment)
-	padding := int(decrypted[len(decrypted)-1])
+	cbc.CryptBlocks(segment, segment)
+	padding := int(segment[len(segment)-1])
 	if padding == 0 || padding > block.BlockSize() {
 		return nil, errors.New("invalid encrypted segment padding")
 	}
-	for _, value := range decrypted[len(decrypted)-padding:] {
+	for _, value := range segment[len(segment)-padding:] {
 		if int(value) != padding {
 			return nil, errors.New("invalid encrypted segment padding")
 		}
 	}
-	return decrypted[:len(decrypted)-padding], nil
+	return segment[:len(segment)-padding], nil
 }
 
 func (app *application) downloadSegments(directory string, segmentUrls []string, key StreamKey, pbPrefix string) (string, error) {
@@ -189,15 +190,19 @@ func (app *application) downloadSegments(directory string, segmentUrls []string,
 	}()
 
 	var bar *mpb.Bar
-	var start time.Time
 	if pbPrefix != "" {
-		start = time.Now()
 		total := len(segmentUrls)
 		bar = app.pbp.AddBar(int64(total), ProgressBarOptions(pbPrefix)...)
+		defer func() {
+			if !keepTemp {
+				bar.Abort(true)
+			}
+		}()
 	}
 
 	var written int64
 	for _, segmentUrl := range segmentUrls {
+		start := time.Now()
 		if err := func() error {
 			resp, err := app.getMedia(segmentUrl)
 			if err != nil {
@@ -244,6 +249,8 @@ func remuxToM4A(input, output string) error {
 }
 
 func remuxToM4AContext(ctx context.Context, input, output string) error {
+	ctx, cancel := context.WithTimeout(ctx, ffmpegFileTimeout)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -257,18 +264,14 @@ func remuxToM4AContext(ctx context.Context, input, output string) error {
 	defer os.RemoveAll(stagingDirectory)
 	tempOutput := filepath.Join(stagingDirectory, "audio.m4a")
 
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	if _, err := runFFmpeg(ctx,
 		"-y",
 		"-i", input,
 		"-map_metadata", "-1",
 		"-c:a", "copy",
 		tempOutput,
-	)
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("ffmpeg: %w", err)
+	); err != nil {
+		return err
 	}
 	info, err := os.Stat(tempOutput)
 	if err != nil {
@@ -294,20 +297,53 @@ func validateM4A(path string) error {
 }
 
 func validateM4AContext(ctx context.Context, path string) error {
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-v", "error", "-i", path, "-f", "null", "-")
-	output, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	message := strings.TrimSpace(string(output))
+	ctx, cancel := context.WithTimeout(ctx, ffmpegFileTimeout)
+	defer cancel()
+	message, err := runFFmpeg(ctx, "-v", "error", "-i", path, "-f", "null", "-")
 	if err != nil {
-		if message == "" {
-			return fmt.Errorf("ffmpeg: %w", err)
-		}
-		return fmt.Errorf("ffmpeg: %w: %s", err, message)
+		return err
 	}
 	if message != "" {
 		return fmt.Errorf("ffmpeg reported decode errors: %s", message)
 	}
 	return nil
+}
+
+type ffmpegDiagnostic struct {
+	data      bytes.Buffer
+	truncated bool
+}
+
+func (d *ffmpegDiagnostic) Write(p []byte) (int, error) {
+	n := min(len(p), maxFFmpegDiagnostic-d.data.Len())
+	_, _ = d.data.Write(p[:n])
+	d.truncated = d.truncated || n < len(p)
+	return len(p), nil
+}
+
+func (d *ffmpegDiagnostic) String() string {
+	message := strings.TrimSpace(d.data.String())
+	if d.truncated {
+		message += " [output truncated]"
+	}
+	return message
+}
+
+func runFFmpeg(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd.WaitDelay = 2 * time.Second
+	var diagnostic ffmpegDiagnostic
+	cmd.Stdout, cmd.Stderr = &diagnostic, &diagnostic
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	message := diagnostic.String()
+	if err != nil {
+		if message == "" {
+			return "", fmt.Errorf("ffmpeg: %w", err)
+		}
+		return "", fmt.Errorf("ffmpeg: %w: %s", err, message)
+	}
+	return message, nil
 }

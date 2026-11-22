@@ -52,6 +52,9 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
+      - name: Require release notes for the tag
+        run: ./scripts/release-notes.sh "$GITHUB_REF_NAME" > /dev/null
+
       - name: Validate workflows and build shell scripts
         run: |
           set -euo pipefail

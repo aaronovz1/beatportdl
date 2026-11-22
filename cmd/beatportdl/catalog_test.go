@@ -408,8 +408,7 @@ func testFlatCatalogTracksPreservesEmbeddedCoverAndIdentitySkip(t *testing.T, li
 	}
 	assertCatalogFiles(t, dir, "One.flac")
 	// A fresh run should recognize the tagged file despite a metadata filename change.
-	app.activeFiles = make(map[string]int64)
-	app.trackIdentityFiles = nil
+	app.resetTrackFileState()
 	track.Name = "Updated Name"
 	if err := app.handleCatalogTracks(nil, link, dir, catalogTestSource([]beatport.Track{track}, release)); err != nil {
 		t.Fatal(err)

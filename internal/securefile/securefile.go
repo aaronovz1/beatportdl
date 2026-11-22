@@ -265,6 +265,13 @@ func Write(path string, data []byte) error {
 }
 
 func publish(d *directory, name string, data []byte, expected os.FileInfo) error {
+	return publishWith(d, name, expected, func(f *os.File) error {
+		_, err := f.Write(data)
+		return err
+	})
+}
+
+func publishWith(d *directory, name string, expected os.FileInfo, fill func(*os.File) error) error {
 	tempName := ".beatportdl-private-" + rand.Text()
 	f, err := createLeaf(d, tempName)
 	if err != nil {
@@ -272,7 +279,7 @@ func publish(d *directory, name string, data []byte, expected os.FileInfo) error
 	}
 	defer d.root.Remove(tempName)
 	defer f.Close()
-	if _, err = f.Write(data); err != nil {
+	if err = fill(f); err != nil {
 		return err
 	}
 	if err = f.Sync(); err != nil {
@@ -331,20 +338,25 @@ func OpenAppend(path string) (*os.File, error) {
 	if private {
 		return f, nil
 	}
-	f.Close()
-	f, _, _, err = openExisting(d, name, false)
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
+	source, opened, _, err := openExisting(d, name, false)
 	if err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(f)
-	closeErr := f.Close()
-	if err != nil {
-		return nil, err
+	defer source.Close()
+	if !os.SameFile(info, opened) {
+		return nil, unsafe("log changed while reopening for migration")
 	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	if err := publish(d, name, data, info); err != nil {
+	if err := publishWith(d, name, info, func(output *os.File) error {
+		_, copyErr := io.Copy(output, source)
+		closeErr := source.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	}); err != nil {
 		return nil, err
 	}
 	f, _, _, err = openExisting(d, name, true)

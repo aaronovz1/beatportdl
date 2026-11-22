@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -17,8 +17,6 @@ import (
 	"unsafe"
 	"unspok3n/beatportdl/config"
 	"unspok3n/beatportdl/internal/beatport"
-
-	"github.com/vbauerster/mpb/v8"
 )
 
 func TestBeatportSearchQuery(t *testing.T) {
@@ -51,7 +49,9 @@ func TestSearchRejectsRemovedBeatsourceBeforeRequest(t *testing.T) {
 		t.Run(query, func(t *testing.T) {
 			var output bytes.Buffer
 			app := &application{logWriter: &output}
-			app.search(query)
+			if err := app.search(query, nil); err != nil {
+				t.Fatal(err)
+			}
 			if !strings.Contains(output.String(), "Beatsource support has been removed") {
 				t.Fatalf("expected migration guidance, got %q", output.String())
 			}
@@ -61,10 +61,8 @@ func TestSearchRejectsRemovedBeatsourceBeforeRequest(t *testing.T) {
 
 func TestSearchRejectsInvalidSelectionsAndPreservesOrder(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "synthetic-token.json")
-	hash := fnv.New64a()
-	_, _ = hash.Write([]byte("synthetic:synthetic"))
 	token, err := json.Marshal(map[string]interface{}{
-		"access_token": "synthetic-token", "login_id": fmt.Sprintf("%x", hash.Sum(nil)),
+		"access_token": "synthetic-token", "account": "synthetic",
 		"issued_at": time.Now().Unix(), "expires_in": 3600,
 	})
 	if err != nil {
@@ -77,7 +75,7 @@ func TestSearchRejectsInvalidSelectionsAndPreservesOrder(t *testing.T) {
 	if err := auth.LoadCache(); err != nil {
 		t.Fatal(err)
 	}
-	bp := beatport.New("", auth)
+	bp := beatport.New(nil, auth)
 	// Inject only the HTTP boundary; Beatport has no exported client setter.
 	clientField := reflect.ValueOf(bp).Elem().FieldByName("client")
 	client := reflect.NewAt(clientField.Type(), unsafe.Pointer(clientField.UnsafeAddr())).Elem().Interface().(*http.Client)
@@ -86,7 +84,7 @@ func TestSearchRejectsInvalidSelectionsAndPreservesOrder(t *testing.T) {
 			return nil, fmt.Errorf("unexpected fixture request: %s %s", req.Method, req.URL)
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{
-			"tracks": [{"name":"Track One","url":"https://www.beatport.com/track/one/11"},{"name":"Track Two","url":"https://www.beatport.com/track/two/12"}],
+			"tracks": [{"name":"Track One\u202eLive","url":"https://www.beatport.com/track/one/11"},{"name":"Track Two","url":"https://www.beatport.com/track/two/12"}],
 			"releases": [{"name":"Release One","url":"https://www.beatport.com/release/one/21"},{"name":"Release Two","url":"https://www.beatport.com/release/two/22"}]
 		}`))}, nil
 	})
@@ -96,15 +94,15 @@ func TestSearchRejectsInvalidSelectionsAndPreservesOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer input.Close()
-	if _, err := inputWriter.WriteString("-1 4 0 2 nope 5 -999 3 1\n"); err != nil {
+	if _, err := inputWriter.WriteString("synthetic query\n-1 4 0 2 nope 5 -999 3 1"); err != nil {
 		t.Fatal(err)
 	}
 	_ = inputWriter.Close()
-	stdin := os.Stdin
-	os.Stdin = input
-	defer func() { os.Stdin = stdin }()
-	app := &application{bp: bp, config: &config.AppConfig{}, logWriter: io.Discard, urls: []string{"already-queued"}}
-	app.search("synthetic query")
+	var output bytes.Buffer
+	app := &application{bp: bp, config: &config.AppConfig{}, logWriter: &output, urls: []string{"already-queued"}}
+	if err := app.mainPrompt(newCLIInput(context.Background(), input)); err != nil {
+		t.Fatal(err)
+	}
 	want := []string{
 		"already-queued",
 		"https://www.beatport.com/release/two/22",
@@ -114,6 +112,9 @@ func TestSearchRejectsInvalidSelectionsAndPreservesOrder(t *testing.T) {
 	}
 	if !reflect.DeepEqual(app.urls, want) {
 		t.Fatalf("queued URLs = %q, want %q", app.urls, want)
+	}
+	if got := output.String(); !strings.Contains(got, `Track One\u202eLive`) || strings.Contains(got, "Track One\u202eLive") {
+		t.Fatalf("unexpected rendered track name: %q", got)
 	}
 }
 
@@ -158,13 +159,13 @@ func testMainPromptShowsMigrationGuidance(t *testing.T, query string) {
 	}
 	defer output.Close()
 	defer outputWriter.Close()
-	stdin, stdout := os.Stdin, os.Stdout
-	os.Stdin, os.Stdout = input, outputWriter
-	defer func() { os.Stdin, os.Stdout = stdin, stdout }()
-	progress := mpb.New(mpb.WithOutput(io.Discard))
-	progress.Shutdown()
-	app := &application{pbp: progress, logWriter: progress}
-	app.mainPrompt()
+	app := &application{logWriter: outputWriter, globalSem: make(chan struct{}, 1)}
+	app.urls = []string{"synthetic"}
+	app.runURLBatch(func(string) {})
+	app.urls = nil
+	if err := app.mainPrompt(newCLIInput(context.Background(), input)); err != nil {
+		t.Fatal(err)
+	}
 	for _, rawURL := range app.urls {
 		app.handleUrl(rawURL)
 	}

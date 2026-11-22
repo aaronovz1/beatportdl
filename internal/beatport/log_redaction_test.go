@@ -19,3 +19,14 @@ func TestRedactLogRemovesPublishedAuthSecrets(t *testing.T) {
 		t.Fatal("request context missing")
 	}
 }
+
+func TestSanitizeLogMessageCoversMixedCaseURLSchemes(t *testing.T) {
+	for _, scheme := range []string{"HTTP", "HTTPS", "hTtPs"} {
+		t.Run(scheme, func(t *testing.T) {
+			msg := SanitizeLogMessage("request failed [" + scheme + "://name:fixture-password@example.test/audio?signature=fixture-signature#fixture-fragment]")
+			if strings.Contains(msg, "fixture-") || !strings.Contains(msg, "example.test/audio?redacted") {
+				t.Fatalf("URL was not redacted: %q", msg)
+			}
+		})
+	}
+}

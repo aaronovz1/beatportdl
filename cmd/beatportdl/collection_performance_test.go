@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -52,10 +51,8 @@ func newCollectionFixture(t testing.TB, count int) (*application, *beatport.Beat
 		})
 	}
 	cachePath := filepath.Join(t.TempDir(), "synthetic-token.json")
-	hash := fnv.New64a()
-	_, _ = hash.Write([]byte("synthetic:synthetic"))
 	token, err := json.Marshal(map[string]interface{}{
-		"access_token": "synthetic-token", "login_id": fmt.Sprintf("%x", hash.Sum(nil)),
+		"access_token": "synthetic-token", "account": "synthetic",
 		"issued_at": time.Now().Unix(), "expires_in": 3600,
 	})
 	if err != nil {
@@ -68,7 +65,7 @@ func newCollectionFixture(t testing.TB, count int) (*application, *beatport.Beat
 	if err := auth.LoadCache(); err != nil {
 		t.Fatal(err)
 	}
-	bp := beatport.New("", auth)
+	bp := beatport.New(nil, auth)
 	clientField := reflect.ValueOf(bp).Elem().FieldByName("client")
 	client := reflect.NewAt(clientField.Type(), unsafe.Pointer(clientField.UnsafeAddr())).Elem().Interface().(*http.Client)
 	client.Transport = searchSelectionTransport(fixture.roundTrip)

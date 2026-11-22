@@ -200,3 +200,91 @@ func TestCatalogDecodePreservesReadErrorsAndClosesBody(t *testing.T) {
 		})
 	}
 }
+
+func TestAPIJSONLimitAppliesBeforeDecoding(t *testing.T) {
+	prefix := `{"id":42,"results":[],"tracks":[],"releases":[]}`
+	padding := strings.Repeat(" ", maxAPIJSONBytes-len(prefix)+1)
+	for _, tc := range []struct {
+		name   string
+		length int64
+		extra  int
+		getter metadataGetter
+	}{
+		{"exact limit", -1, 0, metadataGetters()[0]},
+		{"declared overflow", maxAPIJSONBytes + 1, 1, metadataGetters()[0]},
+		{"underreported page", int64(len(prefix)), 1, pageGetters()[0]},
+		{"unknown-length search", -1, 1, metadataGetter{"search", func(b *Beatport) (bool, error) {
+			result, err := b.Search("synthetic")
+			return result != nil, err
+		}}},
+		{"unknown-length download", -1, 1, metadataGetter{"download", func(b *Beatport) (bool, error) {
+			result, err := b.DownloadTrack(42, "lossless")
+			return result != nil, err
+		}}},
+		{"unknown-length stream", -1, 1, metadataGetter{"stream", func(b *Beatport) (bool, error) {
+			result, err := b.StreamTrack(42)
+			return result != nil, err
+		}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := strings.NewReader(padding[:len(padding)-1+tc.extra])
+			body := &catalogResponseBody{Reader: io.MultiReader(strings.NewReader(prefix), reader)}
+			client := authenticatedTestClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Body: body, ContentLength: tc.length, Request: req}, nil
+			})})
+			present, err := tc.getter.fetch(client)
+			if !body.closed {
+				t.Error("response body was not closed")
+			}
+			if tc.extra == 0 {
+				if err != nil || !present {
+					t.Fatalf("exact-limit response: resource=%v, error=%v", present, err)
+				}
+			} else if !errors.Is(err, ErrResponseTooLarge) || !errors.Is(err, ErrInvalidResponse) || present {
+				t.Fatalf("oversized response: resource=%v, error=%v", present, err)
+			}
+			if tc.length > maxAPIJSONBytes && reader.Len() != len(padding) {
+				t.Error("read body despite oversized Content-Length")
+			}
+		})
+	}
+}
+
+func TestAPIErrorJSONLimitPreservesStatusWithoutBodyDetail(t *testing.T) {
+	const marker = "synthetic-response-marker"
+	client, body := responseTestClient(`{"detail":"`+marker+`"}`, http.StatusForbidden)
+	prefix := body.Reader
+	tail := strings.NewReader(strings.Repeat(" ", maxSmallJSONBytes+128))
+	body.Reader = io.MultiReader(prefix, tail)
+	_, err := client.GetTrack(42)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || !errors.Is(err, ErrResponseTooLarge) || apiErr.StatusCode != http.StatusForbidden || apiErr.Detail != "" {
+		t.Fatalf("oversized error response: %v", err)
+	}
+	if !body.closed || tail.Len() == 0 || strings.Contains(err.Error(), marker) {
+		t.Error("error response was not closed, bounded, or kept out of diagnostics")
+	}
+}
+
+func TestAPIJSONDiagnosticsDoNotExposeCredentials(t *testing.T) {
+	const marker = "synthetic-response-marker"
+	t.Run("body read error", func(t *testing.T) {
+		readErr := errors.New(marker)
+		client, body := responseTestClient("", http.StatusOK)
+		body.Reader = responseReadError{err: readErr}
+		_, err := client.GetTrack(42)
+		if !errors.Is(err, readErr) || !errors.Is(err, ErrInvalidResponse) || strings.Contains(err.Error(), marker) {
+			t.Fatalf("unsafe or unclassified read error: %v", err)
+		}
+	})
+	t.Run("catalog error detail", func(t *testing.T) {
+		client, _ := responseTestClient(`{"detail":"subscription required: `+marker+` https://example.invalid/audio?signature=synthetic-signature"}`, http.StatusForbidden)
+		client.auth.password = marker
+		_, err := client.GetTrack(42)
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || !strings.Contains(apiErr.Detail, "subscription required") ||
+			strings.Contains(err.Error(), marker) || strings.Contains(err.Error(), "synthetic-signature") {
+			t.Fatalf("unsafe or missing catalog error detail: %v", err)
+		}
+	})
+}

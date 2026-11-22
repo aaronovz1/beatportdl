@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"unspok3n/beatportdl/internal/beatport"
 )
 
@@ -16,6 +17,32 @@ type collectionReleases struct {
 	mu          sync.Mutex
 	entries     map[int64]*collectionRelease
 	directories map[string]struct{}
+	covers      map[collectionCoverKey]*collectionCover
+}
+
+type collectionCoverKey struct {
+	releaseID int64
+	directory string
+}
+
+type collectionCover struct {
+	cover     *trackCover
+	processed atomic.Bool
+}
+
+func (cache *collectionReleases) getCover(app *application, release *beatport.Release, dir string, keepSidecar bool) *collectionCover {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.covers == nil {
+		cache.covers = make(map[collectionCoverKey]*collectionCover)
+	}
+	key := collectionCoverKey{release.ID, dir}
+	entry := cache.covers[key]
+	if entry == nil {
+		entry = &collectionCover{cover: newTrackCover(app, release.Image, dir, app.requireCover(true, keepSidecar))}
+		cache.covers[key] = entry
+	}
+	return entry
 }
 
 func (cache *collectionReleases) get(inst *beatport.Beatport, id int64) (*beatport.Release, error) {
@@ -44,6 +71,14 @@ func (cache *collectionReleases) rememberDirectory(directory string) {
 
 // Collection pagination joins every worker before directory cleanup may run.
 func (cache *collectionReleases) cleanup(app *application) {
+	for key, entry := range cache.covers {
+		if app.config.ForceReleaseDirectories && entry.processed.Load() {
+			if err := entry.cover.Handle(); err != nil {
+				app.LogError(fmt.Sprintf("handle cover for release %d", key.releaseID), err)
+			}
+		}
+		entry.cover.CleanupTemp()
+	}
 	for directory := range cache.directories {
 		app.cleanup(directory)
 	}
@@ -53,8 +88,6 @@ func (app *application) skipCollectionTrack(track *beatport.Track, directory str
 	if app.config.TrackExists != "skip" || app.validateDownloadDirectory(directory) != nil {
 		return false
 	}
-	app.activeFilesMutex.Lock()
-	defer app.activeFilesMutex.Unlock()
 	_, exists := app.findExistingTrackFileByIdentity(directory, media.extension, track.ID, track.ISRC)
 	return exists
 }
@@ -112,16 +145,13 @@ func (app *application) handleCollectionTrack(inst *beatport.Beatport, track *be
 		return false, fmt.Errorf("setup track release directory: %w", err)
 	}
 	releases.rememberDirectory(trackDownloadsDir)
-	cover := newTrackCover(app, release.Image, trackDownloadsDir, app.requireCover(true, app.config.ForceReleaseDirectories))
-	defer cover.CleanupTemp()
-	processed, err := app.handleTrackMedia(fullTrack, trackDownloadsDir, cover, media)
+	entry := releases.getCover(app, release, trackDownloadsDir, releaseDirectories)
+	processed, err := app.handleTrackMedia(fullTrack, trackDownloadsDir, entry.cover, media)
 	if err != nil {
 		return false, err
 	}
-	if app.config.ForceReleaseDirectories && processed {
-		if err := cover.Handle(); err != nil {
-			return processed, fmt.Errorf("handle track release cover file: %w", err)
-		}
+	if processed {
+		entry.processed.Store(true)
 	}
 	return processed, nil
 }

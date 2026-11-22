@@ -1,11 +1,78 @@
 package beatport
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
+
+func TestCredentialCacheBindsToAccountNotPassword(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.json")
+	a := NewAuth("synthetic-account", "synthetic-original", path)
+	a.tokenPair = &tokenPair{AccessToken: "synthetic-token"}
+	if err := a.WriteCache(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["account"]) != `"synthetic-account"` || fields["login_id"] != nil {
+		t.Error("cache must contain the account binding, not a legacy login ID")
+	}
+	updated := NewAuth("synthetic-account", "synthetic-updated", path)
+	if err := updated.LoadCache(); err != nil || updated.snapshot() == nil {
+		t.Fatalf("same account with changed password did not load: %v", err)
+	}
+	different := NewAuth("other-account", "synthetic-original", path)
+	if err := different.LoadCache(); !errors.Is(err, ErrCacheAccountMismatch) || different.snapshot() != nil {
+		t.Fatal("another account's token was loaded")
+	}
+}
+
+func TestCredentialCacheInvalidatesLegacyEntries(t *testing.T) {
+	for _, fixture := range []struct{ name, fields string }{
+		{"legacy", `"login_id":"legacy-marker"`},
+		{"mixed", `"account":"synthetic-account","Login_ID":null`},
+		{"unbound", `"expires_in":3600`},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "cache.json")
+			data := []byte(`{"access_token":"synthetic-token","refresh_token":"synthetic-refresh",` + fixture.fields + `}`)
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			a := NewAuth("synthetic-account", "synthetic-password", path)
+			want := ErrLegacyTokenCache
+			if fixture.name == "unbound" {
+				want = ErrCacheAccountMismatch
+			}
+			if err := a.LoadCache(); !errors.Is(err, want) || a.snapshot() != nil {
+				t.Fatal("untrusted cached token was loaded")
+			}
+			if fixture.name == "unbound" {
+				return
+			}
+			updated, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(updated) != "{}" {
+				t.Error("legacy cache was not replaced by an empty entry")
+			}
+			if err := a.LoadCache(); err == nil || a.snapshot() != nil {
+				t.Fatal("invalidated cache was reusable")
+			}
+		})
+	}
+}
 
 func TestCredentialCacheRejectsSymlink(t *testing.T) {
 	dir := t.TempDir()
@@ -18,7 +85,7 @@ func TestCredentialCacheRejectsSymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	a := NewAuth("synthetic", "synthetic", link)
-	a.tokenPair = &tokenPair{AccessToken: "synthetic", LoginID: a.loginId()}
+	a.tokenPair = &tokenPair{AccessToken: "synthetic"}
 	if err := a.WriteCache(); err == nil {
 		t.Error("WriteCache accepted symlink")
 	}
@@ -41,7 +108,7 @@ func TestCredentialCachePrivateReplacement(t *testing.T) {
 	}
 	before, _ := os.Stat(file)
 	a := NewAuth("synthetic", "synthetic", file)
-	a.tokenPair = &tokenPair{AccessToken: "synthetic", LoginID: a.loginId()}
+	a.tokenPair = &tokenPair{AccessToken: "synthetic"}
 	if err := a.WriteCache(); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +128,7 @@ func TestCredentialCacheLoadAndWriteRejectLinkedValidCache(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "original.json")
 	a := NewAuth("synthetic", "synthetic", target)
-	a.tokenPair = &tokenPair{AccessToken: "synthetic", LoginID: a.loginId()}
+	a.tokenPair = &tokenPair{AccessToken: "synthetic"}
 	if err := a.WriteCache(); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +153,7 @@ func TestCredentialCacheLoadAndWriteRejectLinkedValidCache(t *testing.T) {
 			if err := loaded.LoadCache(); err == nil {
 				t.Error("LoadCache accepted a linked valid cache")
 			}
-			loaded.tokenPair = &tokenPair{AccessToken: "replacement", LoginID: loaded.loginId()}
+			loaded.tokenPair = &tokenPair{AccessToken: "replacement"}
 			if err := loaded.WriteCache(); err == nil {
 				t.Error("WriteCache accepted a linked valid cache")
 			}

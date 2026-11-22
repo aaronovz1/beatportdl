@@ -3,12 +3,29 @@ package beatport
 import (
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
 
+func TestAPIClientUsesConfiguredProxy(t *testing.T) {
+	proxyURL, err := url.Parse("socks5://proxy.example.test:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := New(proxyURL, nil)
+	transport := client.client.Transport.(*http.Transport)
+	req, err := http.NewRequest(http.MethodGet, beatportBaseUrl+"/catalog/tracks/42/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := transport.Proxy(req); err != nil || got != proxyURL {
+		t.Fatalf("configured proxy not selected: %v, %v", got, err)
+	}
+}
+
 func TestBeatportOnlyClientRequests(t *testing.T) {
-	inst := New("", authenticatedTestClient(nil).auth)
+	inst := New(nil, authenticatedTestClient(nil).auth)
 	inst.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.Scheme != "https" || req.URL.Host != "api.beatport.com" {
 			t.Errorf("unexpected API URL: %s", req.URL)

@@ -5,10 +5,50 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 )
 
-var ErrInvalidResponse = errors.New("invalid API response")
+const (
+	maxAPIJSONBytes   = 8 << 20
+	maxSmallJSONBytes = 64 << 10 // OAuth token and HTTP error bodies
+)
+
+var (
+	ErrInvalidResponse  = errors.New("invalid API response")
+	ErrResponseTooLarge = fmt.Errorf("%w: body exceeds size limit", ErrInvalidResponse)
+)
+
+type apiBodyReadError struct{ cause error }
+
+func (e apiBodyReadError) Error() string { return "invalid API response: could not read body" }
+func (e apiBodyReadError) Unwrap() []error {
+	return []error{ErrInvalidResponse, e.cause}
+}
+
+func readAPIJSON(resp *http.Response, limit int64) ([]byte, error) {
+	defer resp.Body.Close()
+	if resp.ContentLength > limit {
+		return nil, ErrResponseTooLarge
+	}
+	// Enforce the limit on bytes actually read, including transparently
+	// decompressed bodies and any bytes after the first JSON value.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if int64(len(data)) > limit {
+		return nil, ErrResponseTooLarge
+	}
+	if err != nil {
+		return nil, apiBodyReadError{cause: err}
+	}
+	return data, nil
+}
+
+func decodeTokenJSON(reader io.Reader, target *tokenPair) error {
+	if err := decodeCatalogJSON(reader, target); err != nil {
+		return fmt.Errorf("%w: malformed token JSON", ErrInvalidResponse)
+	}
+	return nil
+}
 
 type catalogResource interface {
 	Track | Release | Playlist | Chart | Label | Artist | PlaylistItem

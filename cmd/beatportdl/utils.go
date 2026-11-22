@@ -1,12 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 	"unspok3n/beatportdl/internal/securefile"
 	"unspok3n/beatportdl/internal/taglib"
 
@@ -67,15 +69,9 @@ func (app *application) downloadWorker(wg *sync.WaitGroup, fn func()) {
 }
 
 func (app *application) logWorkerPanic(worker string, recovered interface{}) {
-	message := app.redactLog(fmt.Sprintf("%s panic: %v\n%s", worker, recovered, debug.Stack()))
-	if app.logWriter != nil {
-		fmt.Fprint(app.logWriter, message)
-	} else {
-		fmt.Fprint(os.Stderr, message)
-	}
-	if app.logFile != nil {
-		_, _ = app.logFile.WriteString(message)
-	}
+	app.failures.Add(1)
+	message := app.logLine(fmt.Sprintf("%s panic: %v", worker, recovered))
+	app.writeErrorLog(message + app.redactLog(string(debug.Stack())))
 }
 
 func (app *application) context() context.Context {
@@ -107,6 +103,10 @@ func (app *application) semRelease(s chan struct{}) {
 }
 
 func (app *application) downloadFile(url string, destination string, pbPrefix string) error {
+	return app.downloadFileLimited(url, destination, pbPrefix, 0)
+}
+
+func (app *application) downloadFileLimited(url, destination, pbPrefix string, maxBytes int64) error {
 	if err := app.context().Err(); err != nil {
 		return err
 	}
@@ -143,6 +143,13 @@ func (app *application) downloadFile(url string, destination string, pbPrefix st
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
+	var body io.Reader = resp.Body
+	if maxBytes > 0 {
+		if resp.ContentLength > maxBytes {
+			return fmt.Errorf("download size limit exceeded (%d bytes)", maxBytes)
+		}
+		body = io.LimitReader(body, maxBytes+1)
+	}
 
 	var written int64
 	if pbPrefix != "" {
@@ -151,8 +158,13 @@ func (app *application) downloadFile(url string, destination string, pbPrefix st
 			contentLength, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 		}
 		bar := app.pbp.AddBar(contentLength, ProgressBarOptions(pbPrefix)...)
+		defer func() {
+			if !keepTemp {
+				bar.Abort(true)
+			}
+		}()
 
-		proxyReader, err := bar.ProxyReader(resp.Body)
+		proxyReader, err := bar.ProxyReader(body)
 		if err != nil {
 			return fmt.Errorf("create download progress reader: %w", err)
 		}
@@ -163,12 +175,15 @@ func (app *application) downloadFile(url string, destination string, pbPrefix st
 			return err
 		}
 	} else {
-		written, err = io.Copy(out, resp.Body)
+		written, err = io.Copy(out, body)
 		if err != nil {
 			return err
 		}
 	}
 
+	if maxBytes > 0 && written > maxBytes {
+		return fmt.Errorf("download size limit exceeded (%d bytes)", maxBytes)
+	}
 	if resp.ContentLength >= 0 && written != resp.ContentLength {
 		return fmt.Errorf("download size mismatch: got %d bytes, want %d", written, resp.ContentLength)
 	}
@@ -198,12 +213,26 @@ const (
 	mediaResponseHeaderTimeout = 40 * time.Second
 )
 
-var defaultMediaClient = newMediaClient()
+var defaultMediaClient = newMediaClient(nil)
 
-func newMediaClient() *http.Client {
+func newMediaClient(proxyURL *url.URL) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = mediaResponseHeaderTimeout
-	return &http.Client{Transport: transport, Timeout: mediaRequestTimeout}
+	if proxyURL != nil {
+		transport.Proxy = http.ProxyURL(proxyURL)
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   mediaRequestTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// The default Referer may contain a signed media URL.
+			req.Header.Del("Referer")
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			return nil
+		},
+	}
 }
 
 func (app *application) getMedia(url string) (*http.Response, error) {
@@ -266,7 +295,7 @@ func clampProgressPrefix(prefix string, maxWidth int) string {
 
 func ProgressBarOptions(prefix string) []mpb.BarOption {
 	red, green, blue := color.New(color.FgRed), color.New(color.FgGreen), color.New(color.FgBlue)
-	prefix = clampProgressPrefix(prefix, progressPrefixMaxWidth)
+	prefix = clampProgressPrefix(presentationText(prefix), progressPrefixMaxWidth)
 
 	options := []mpb.BarOption{
 		mpb.BarFillerClearOnComplete(),
@@ -293,46 +322,53 @@ func ProgressBarOptions(prefix string) []mpb.BarOption {
 	return options
 }
 
-func GetLine() string {
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		switch {
-		case errors.Is(err, io.EOF):
-			os.Exit(0)
-		default:
-			fmt.Fprintf(os.Stderr, "read input string: %v\n", err)
-			os.Exit(1)
+// presentationText makes untrusted text safe to render within one display line.
+func presentationText(s string) string {
+	escape := func(r rune) bool {
+		return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+	}
+	if utf8.ValidString(s) && strings.IndexFunc(s, escape) == -1 {
+		return s
+	}
+	var safe strings.Builder
+	safe.Grow(len(s))
+	for _, r := range s {
+		if escape(r) {
+			quoted := strconv.QuoteRuneToASCII(r)
+			safe.WriteString(quoted[1 : len(quoted)-1])
+		} else {
+			safe.WriteRune(r)
 		}
 	}
-	input = strings.TrimSuffix(input, "\n")
-	input = strings.TrimSuffix(input, "\r")
-	return input
+	return safe.String()
 }
 
-func Pause() {
-	fmt.Println("\nPress enter to exit")
-	fmt.Scanln()
-	os.Exit(1)
+func (app *application) logLine(message string) string {
+	return presentationText(app.redactLog(message)) + "\n"
+}
+
+func (app *application) writeErrorLog(message string) {
+	app.writeLog(message)
+	if app.logFile != nil {
+		_, _ = app.logFile.WriteString(message)
+	}
+}
+
+func (app *application) writeLog(message string) {
+	writer := app.logWriter
+	if writer == nil {
+		writer = os.Stderr
+	}
+	fmt.Fprint(writer, message)
 }
 
 func (app *application) LogError(caller string, err error) {
-	message := app.redactLog(fmt.Sprintf("%s: %s\n", caller, err.Error()))
-	fmt.Fprint(app.logWriter, message)
-
-	if app.logFile != nil {
-		app.logFile.WriteString(message)
-	}
+	app.failures.Add(1)
+	app.writeErrorLog(app.logLine(fmt.Sprintf("%s: %s", caller, err.Error())))
 }
 
 func (app *application) LogInfo(info string) {
-	message := app.redactLog(fmt.Sprintf("%s\n", info))
-	fmt.Fprint(app.logWriter, message)
-}
-
-func (app *application) FatalError(caller string, err error) {
-	app.LogError(caller, err)
-	Pause()
+	app.writeLog(app.logLine(info))
 }
 
 func ExecutableDirFilePath(fileName string) (string, error) {
@@ -432,13 +468,4 @@ func findFile(fileName string, additionalDirs []string) (string, bool, error) {
 		return "", false, fmt.Errorf("unsafe default file %s: %w", defaultFilePath, err)
 	}
 	return defaultFilePath, false, nil
-}
-
-func CreateDirectory(directory string) error {
-	if _, err := os.Stat(directory); os.IsNotExist(err) {
-		if err := os.MkdirAll(directory, 0760); err != nil {
-			return fmt.Errorf("create directory: %w", err)
-		}
-	}
-	return nil
 }

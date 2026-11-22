@@ -3,7 +3,9 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-BUILD_CMD = go build -buildvcs=false -ldflags "-w -linkmode external -extldflags '-lstdc++'" -buildmode pie
+# These legacy recipes accept arbitrary Zig flags instead of a dependency prefix.
+# Rebuild their cgo inputs without deleting the shared Go cache.
+BUILD_CMD = go build -a -buildvcs=false -ldflags "-w -linkmode external -extldflags '-lstdc++'" -buildmode pie
 BUILD_SRC = ./cmd/beatportdl
 BUILD_DIR = ./bin
 DOCKER_BUILD_SCRIPT = ./scripts/docker-build.sh
@@ -47,7 +49,6 @@ docker-release-all:
 
 darwin-arm64:
 	@echo "Building for macOS ARM64"
-	go clean -cache
 	CGO_ENABLED=1 \
 	GOOS=darwin \
 	GOARCH=arm64 \
@@ -58,7 +59,6 @@ darwin-arm64:
 
 darwin-amd64:
 	@echo "Building for macOS AMD64"
-	go clean -cache
 	CGO_ENABLED=1 \
 	GOOS=darwin \
 	GOARCH=amd64 \
@@ -69,7 +69,6 @@ darwin-amd64:
 
 linux-amd64:
 	@echo "Building for Linux AMD64"
-	go clean -cache
 	CGO_ENABLED=1 \
 	GOOS=linux \
 	GOARCH=amd64 \
@@ -79,7 +78,6 @@ linux-amd64:
 
 linux-arm64:
 	@echo "Building for Linux ARM64"
-	go clean -cache
 	CGO_ENABLED=1 \
 	GOOS=linux \
 	GOARCH=arm64 \
@@ -89,7 +87,6 @@ linux-arm64:
 
 windows-amd64:
 	@echo "Building for Windows AMD64"
-	go clean -cache
 	CGO_ENABLED=1 \
 	GOOS=windows \
 	GOARCH=amd64 \

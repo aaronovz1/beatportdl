@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -183,16 +184,19 @@ func (app *application) setupDownloadsDirectoryWithFirstTrackGenre(baseDir strin
 }
 
 func (app *application) requireCover(respectFixTags, respectKeepCover bool) bool {
-	fixTags := respectFixTags && app.config.FixTags &&
-		(app.config.CoverSize != config.DefaultCoverSize || app.config.Quality != "lossless")
+	// The actual format is selected by the media endpoint. Keep the provider
+	// lazy until the chosen format needs artwork.
+	fixTags := respectFixTags && app.config.FixTags
 	keepCover := respectKeepCover && app.config.SortByContext && app.config.KeepCover
 	return fixTags || keepCover
 }
 
+const maxCoverBytes = 16 * 1024 * 1024
+
 func (app *application) downloadCover(image beatport.Image, downloadsDir string) (string, error) {
 	coverUrl := image.FormattedUrl(app.config.CoverSize)
 	coverPath := filepath.Join(downloadsDir, uuid.New().String())
-	err := app.downloadFile(coverUrl, coverPath, "")
+	err := app.downloadFileLimited(coverUrl, coverPath, "", maxCoverBytes)
 	if err != nil {
 		return "", err
 	}
@@ -242,17 +246,25 @@ func (cover *trackCover) CleanupTemp() {
 }
 
 func (cover *trackCover) Handle() error {
-	if cover == nil {
+	return cover.handleNamed("cover.jpg")
+}
+
+func (cover *trackCover) handleNamed(name string) error {
+	if cover == nil || !cover.app.config.KeepCover || !cover.app.config.SortByContext {
 		return nil
 	}
 	path, err := cover.Path()
 	if err != nil {
 		return err
 	}
-	return cover.app.handleCoverFile(path)
+	return cover.app.handleCoverFileNamed(path, name)
 }
 
 func (app *application) handleCoverFile(path string) error {
+	return app.handleCoverFileNamed(path, "cover.jpg")
+}
+
+func (app *application) handleCoverFileNamed(path, name string) error {
 	if path == "" {
 		return nil
 	}
@@ -263,7 +275,7 @@ func (app *application) handleCoverFile(path string) error {
 		return err
 	}
 	if app.config.KeepCover && app.config.SortByContext {
-		newPath := filepath.Join(filepath.Dir(path), "cover.jpg")
+		newPath := filepath.Join(filepath.Dir(path), name)
 		if _, err := inspectDownloadFile(newPath); err != nil {
 			return err
 		}
@@ -274,6 +286,22 @@ func (app *application) handleCoverFile(path string) error {
 		os.Remove(path)
 	}
 	return nil
+}
+
+func readCoverImage(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxCoverBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxCoverBytes {
+		return nil, errors.New("cover size limit exceeded")
+	}
+	return data, nil
 }
 
 func (app *application) trackTagsNeedCover(location string) bool {
@@ -377,37 +405,112 @@ func (app *application) fetchTrackStream(inst *beatport.Beatport, id int64) (*be
 	return inst.StreamTrack(id)
 }
 
+type trackDirectoryState struct {
+	sync.Mutex
+	indexes map[string]*directoryIdentityIndex
+	writes  map[string]chan struct{}
+}
+
+type directoryIdentityIndex struct {
+	trackIdentityIndex
+	snapshot  os.FileInfo
+	paths     []string
+	nextProbe int
+}
+
+func (app *application) trackDirectory(directory string) *trackDirectoryState {
+	key := trackPathKey(directory)
+	app.trackFilesMutex.Lock()
+	defer app.trackFilesMutex.Unlock()
+	state := app.trackDirectories[key]
+	if state == nil {
+		if app.trackDirectories == nil {
+			app.trackDirectories = make(map[string]*trackDirectoryState)
+		}
+		state = &trackDirectoryState{
+			indexes: make(map[string]*directoryIdentityIndex),
+			writes:  make(map[string]chan struct{}),
+		}
+		app.trackDirectories[key] = state
+	}
+	return state
+}
+
+func (state *trackDirectoryState) identityIndex(directory, fileExtension string) *directoryIdentityIndex {
+	// Case-distinct directories on a case-sensitive volume share reservations,
+	// but must not share scan results.
+	key := filepath.Clean(directory) + "\x00" + strings.ToLower(fileExtension)
+	index := state.indexes[key]
+	if index == nil {
+		index = &directoryIdentityIndex{trackIdentityIndex: trackIdentityIndex{
+			files:      make(map[string]*indexedTrackFile),
+			byIdentity: make(map[string]map[string]*indexedTrackFile),
+		}}
+		state.indexes[key] = index
+	}
+	return index
+}
+
 func (app *application) findExistingTrackFileByIdentity(directory, fileExtension string, trackID int64, isrc string) (string, bool) {
+	state := app.trackDirectory(directory)
+	state.Lock()
+	defer state.Unlock()
+	return app.findExistingTrackFileInDirectory(state, directory, fileExtension, trackID, isrc)
+}
+
+// The caller holds the directory lock across lookup and any reservation.
+func (app *application) findExistingTrackFileInDirectory(state *trackDirectoryState, directory, fileExtension string, trackID int64, isrc string) (string, bool) {
 	if trackID == 0 && isrc == "" {
 		return "", false
 	}
 
-	index := app.trackIdentityFilesForDirectory(directory, fileExtension)
+	directory = filepath.Clean(directory)
+	index := state.identityIndex(directory, fileExtension)
 	identity := trackFileIdentity{ISRC: isrc}
 	if trackID != 0 {
 		identity.TrackID = strconv.FormatInt(trackID, 10)
 	}
-	for _, key := range identity.keys() {
+	keys := identity.keys()
+	if path, ok := app.matchIndexedTrackFile(index, keys, trackID, isrc); ok {
+		return path, true
+	}
+
+	info, err := os.Stat(directory)
+	if err != nil {
+		index.snapshot = nil
+		return "", false
+	}
+	sameDirectory := index.snapshot != nil && os.SameFile(index.snapshot, info)
+	if !sameDirectory || !index.snapshot.ModTime().Equal(info.ModTime()) {
+		if !app.refreshTrackIdentityDirectory(index, directory, fileExtension, info, sameDirectory) {
+			return "", false
+		}
+		if path, ok := app.matchIndexedTrackFile(index, keys, trackID, isrc); ok || !sameDirectory {
+			return path, ok
+		}
+	}
+
+	// An in-place retag can leave the directory and file timestamps unchanged.
+	// On a warm miss, rotate through the files one at a time to bound tag I/O.
+	if len(index.paths) != 0 {
+		index.nextProbe %= len(index.paths)
+		path := index.paths[index.nextProbe]
+		index.nextProbe++
+		if candidate := app.refreshIndexedTrackFile(index, path); candidate != nil &&
+			candidate.identity.matches(trackID, isrc) && !app.trackPathOwnedByOther(trackPathKey(path), trackID) {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+func (app *application) matchIndexedTrackFile(index *directoryIdentityIndex, keys []string, trackID int64, isrc string) (string, bool) {
+	for _, key := range keys {
 		for _, candidate := range index.byIdentity[key] {
-			if owner, active := app.activeFiles[trackPathKey(candidate.path)]; active && owner != trackID {
+			if app.trackPathOwnedByOther(trackPathKey(candidate.path), trackID) {
 				continue
 			}
-			info, err := inspectDownloadFile(candidate.path)
-			if err != nil || info == nil {
-				index.remove(candidate.path)
-				continue
-			}
-			// Metadata can change in place even when sync tools preserve size and mtime.
-			currentIdentity, err := app.readExistingTrackFileIdentity(candidate.path)
-			if err != nil {
-				index.remove(candidate.path)
-				continue
-			}
-			if !candidate.unchanged(info) || currentIdentity != candidate.diskIdentity {
-				index.remove(candidate.path)
-				candidate = index.store(candidate.path, currentIdentity, info)
-			}
-			if candidate.identity.matches(trackID, isrc) {
+			if current := app.refreshIndexedTrackFile(index, candidate.path); current != nil && current.identity.matches(trackID, isrc) {
 				return candidate.path, true
 			}
 		}
@@ -416,60 +519,68 @@ func (app *application) findExistingTrackFileByIdentity(directory, fileExtension
 	return "", false
 }
 
-// The caller holds activeFilesMutex for both reservations and index mutations.
-func (app *application) trackIdentityFilesForDirectory(directory, fileExtension string) *trackIdentityIndex {
-	directory = filepath.Clean(directory)
-	cacheKey := directory + "\x00" + strings.ToLower(fileExtension)
-	if app.trackIdentityFiles == nil {
-		app.trackIdentityFiles = make(map[string]*trackIdentityIndex)
+func (app *application) refreshIndexedTrackFile(index *directoryIdentityIndex, path string) *indexedTrackFile {
+	info, err := inspectDownloadFile(path)
+	if err != nil || info == nil {
+		index.remove(path)
+		return nil
 	}
-	if index, ok := app.trackIdentityFiles[cacheKey]; ok {
-		return index
+	identity, err := app.readExistingTrackFileIdentity(path)
+	if err != nil {
+		index.remove(path)
+		return nil
 	}
+	if previous := index.files[path]; previous != nil && previous.unchanged(info) && identity == previous.diskIdentity {
+		return previous
+	}
+	return index.store(path, identity, info)
+}
 
-	index := &trackIdentityIndex{
-		files:      make(map[string]*indexedTrackFile),
-		byIdentity: make(map[string]map[string]*indexedTrackFile),
-	}
-	app.trackIdentityFiles[cacheKey] = index
-
+func (app *application) refreshTrackIdentityDirectory(index *directoryIdentityIndex, directory, fileExtension string, info os.FileInfo, sameDirectory bool) bool {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return index
+		index.snapshot = nil
+		return false
 	}
 
+	seen := make(map[string]struct{}, len(entries))
+	index.paths = index.paths[:0]
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), fileExtension) {
 			continue
 		}
 
-		candidate := filepath.Join(directory, entry.Name())
-		info, err := inspectDownloadFile(candidate)
-		if err != nil || info == nil {
-			continue
+		path := filepath.Join(directory, entry.Name())
+		seen[path] = struct{}{}
+		index.paths = append(index.paths, path)
+		if index.files[path] == nil || !sameDirectory {
+			app.refreshIndexedTrackFile(index, path)
 		}
-		identity, err := app.readExistingTrackFileIdentity(candidate)
-		if err != nil {
-			continue
-		}
-		index.store(candidate, identity, info)
 	}
-
-	return index
+	for path := range index.files {
+		if _, present := seen[path]; !present {
+			index.remove(path)
+		}
+	}
+	// Use the snapshot from before ReadDir so changes during the scan can
+	// invalidate this listing on the next miss.
+	index.snapshot = info
+	return true
 }
 
 func (app *application) resetTrackFileState() {
-	app.activeFilesMutex.Lock()
-	defer app.activeFilesMutex.Unlock()
+	app.trackFilesMutex.Lock()
+	defer app.trackFilesMutex.Unlock()
 	app.activeFiles = make(map[string]int64, len(app.urls))
-	app.activeTrackWrites = nil
-	app.trackIdentityFiles = nil
+	app.trackDirectories = nil
 }
 
 func (app *application) rememberCompletedTrackFile(path string, track *beatport.Track) {
-	app.activeFilesMutex.Lock()
-	defer app.activeFilesMutex.Unlock()
 	path = filepath.Clean(path)
+	directory := filepath.Dir(path)
+	state := app.trackDirectory(directory)
+	state.Lock()
+	defer state.Unlock()
 	info, err := inspectDownloadFile(path)
 	if err != nil || info == nil {
 		return
@@ -482,7 +593,7 @@ func (app *application) rememberCompletedTrackFile(path string, track *beatport.
 	if track.ID != 0 {
 		identity.TrackID = strconv.FormatInt(track.ID, 10)
 	}
-	index := app.trackIdentityFilesForDirectory(filepath.Dir(path), filepath.Ext(path))
+	index := state.identityIndex(directory, filepath.Ext(path))
 	// A successful transfer is known even when the user disables identity tags.
 	file := index.store(path, identity, info)
 	file.diskIdentity = diskIdentity
@@ -514,9 +625,10 @@ func (app *application) existingTrackFileBelongsToDifferentTrack(path string, tr
 
 func (app *application) reserveSuffixedTrackFilePath(directory, fileName, fileExtension string, trackID int64) (string, error) {
 	for i := 1; ; i++ {
-		candidate := filepath.Join(directory, fmt.Sprintf("%s (%d)%s", fileName, i, fileExtension))
+		suffix := fmt.Sprintf(" (%d)%s", i, fileExtension)
+		candidate := filepath.Join(directory, beatport.FitTrackFilename(fileName, suffix))
 		key := trackPathKey(candidate)
-		if owner, exists := app.activeFiles[key]; exists && owner != trackID {
+		if app.trackPathOwnedByOther(key, trackID) {
 			continue
 		}
 
@@ -526,25 +638,41 @@ func (app *application) reserveSuffixedTrackFilePath(directory, fileName, fileEx
 			return "", err
 		}
 
-		app.activeFiles[key] = trackID
+		app.rememberTrackPathReservation(key, trackID)
 		return candidate, nil
 	}
 }
 
-// The caller holds activeFilesMutex.
-func (app *application) reserveTrackPathLocked(directory, fileName, fileExtension string, trackID int64, isrc string) (string, error) {
-	basePath := filepath.Join(directory, fileName+fileExtension)
+func (app *application) trackPathOwnedByOther(key string, trackID int64) bool {
+	app.trackFilesMutex.Lock()
+	defer app.trackFilesMutex.Unlock()
+	owner, exists := app.activeFiles[key]
+	return exists && owner != trackID
+}
+
+func (app *application) rememberTrackPathReservation(key string, trackID int64) {
+	app.trackFilesMutex.Lock()
+	defer app.trackFilesMutex.Unlock()
+	if app.activeFiles == nil {
+		app.activeFiles = make(map[string]int64)
+	}
+	app.activeFiles[key] = trackID
+}
+
+// The caller holds the directory lock, including across reservation and claim.
+func (app *application) reserveTrackPathInDirectory(state *trackDirectoryState, directory, fileName, fileExtension string, trackID int64, isrc string) (string, error) {
+	basePath := filepath.Join(directory, beatport.FitTrackFilename(fileName, fileExtension))
 	baseKey := trackPathKey(basePath)
 
-	if existingPath, ok := app.findExistingTrackFileByIdentity(directory, fileExtension, trackID, isrc); ok {
+	if existingPath, ok := app.findExistingTrackFileInDirectory(state, directory, fileExtension, trackID, isrc); ok {
 		path, err := app.handleExistingTrackPath(existingPath)
 		if path != "" {
-			app.activeFiles[trackPathKey(path)] = trackID
+			app.rememberTrackPathReservation(trackPathKey(path), trackID)
 		}
 		return path, err
 	}
 
-	if owner, exists := app.activeFiles[baseKey]; exists && owner != trackID {
+	if app.trackPathOwnedByOther(baseKey, trackID) {
 		return app.reserveSuffixedTrackFilePath(directory, fileName, fileExtension, trackID)
 	}
 
@@ -559,12 +687,12 @@ func (app *application) reserveTrackPathLocked(directory, fileName, fileExtensio
 
 		path, err := app.handleExistingTrackPath(basePath)
 		if path != "" {
-			app.activeFiles[baseKey] = trackID
+			app.rememberTrackPathReservation(baseKey, trackID)
 		}
 		return path, err
 	}
 
-	app.activeFiles[baseKey] = trackID
+	app.rememberTrackPathReservation(baseKey, trackID)
 	return basePath, nil
 }
 
@@ -582,7 +710,7 @@ func (app *application) transferTrackMedia(track *beatport.Track, filePath strin
 	if app.config.ShowProgress {
 		prefix = infoDisplay
 	} else {
-		fmt.Println("Downloading " + infoDisplay)
+		fmt.Println("Downloading " + presentationText(infoDisplay))
 	}
 
 	if media.download != nil {
@@ -605,7 +733,7 @@ func (app *application) transferTrackMedia(track *beatport.Track, filePath strin
 	}
 
 	if !app.config.ShowProgress {
-		fmt.Printf("Finished downloading %s\n", infoDisplay)
+		fmt.Printf("Finished downloading %s\n", presentationText(infoDisplay))
 	}
 
 	return nil
@@ -736,7 +864,7 @@ func (app *application) tagTrack(location string, track *beatport.Track, coverPa
 	}
 
 	if coverPath != "" && (app.config.CoverSize != config.DefaultCoverSize || fileExt == ".m4a") {
-		data, err := os.ReadFile(coverPath)
+		data, err := readCoverImage(coverPath)
 		if err != nil {
 			return err
 		}
@@ -782,10 +910,21 @@ func forPaginatedWorkers[T any](
 	// Pagination owns queued workers until every return path has joined them.
 	defer workers.Wait()
 	page := 1
+	seenContinuations := make(map[string]struct{})
 	for {
 		paginated, err := fetchPage(entityId, page, params)
 		if err != nil {
 			return fmt.Errorf("fetch page: %w", err)
+		}
+		if paginated == nil {
+			return errors.New("pagination returned no page")
+		}
+		if paginated.Next != nil {
+			next := strings.TrimSpace(*paginated.Next)
+			if _, seen := seenContinuations[next]; seen || next == "" || len(paginated.Results) == 0 {
+				return fmt.Errorf("pagination did not advance on page %d", page)
+			}
+			seenContinuations[next] = struct{}{}
 		}
 
 		for i, item := range paginated.Results {
@@ -863,7 +1002,7 @@ func (app *application) handleTrackLink(inst *beatport.Beatport, link *beatport.
 		if !processed {
 			return
 		}
-		if err := cover.Handle(); err != nil {
+		if err := cover.handleNamed(fmt.Sprintf("cover-%d.jpg", release.ID)); err != nil {
 			app.errorLogWrapper(link.Original, "handle cover file", err)
 			return
 		}

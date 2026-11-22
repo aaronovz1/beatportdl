@@ -209,7 +209,7 @@ func TestMediaTimeoutsAreBoundedAndPreserveDestination(t *testing.T) {
 			}))
 			defer server.Close()
 			defer releaseRequest()
-			client := newMediaClient()
+			client := newMediaClient(nil)
 			if phase == "headers" {
 				client.Transport.(*http.Transport).ResponseHeaderTimeout = 40 * time.Millisecond
 			} else {
@@ -243,7 +243,7 @@ func TestMediaTimeoutsAreBoundedAndPreserveDestination(t *testing.T) {
 }
 
 func TestMediaClientAllowsLargeTransfersWithBoundedHeaders(t *testing.T) {
-	client := newMediaClient()
+	client := newMediaClient(nil)
 	defer client.CloseIdleConnections()
 	if client.Timeout != 30*time.Minute {
 		t.Fatalf("overall timeout = %s, want 30m", client.Timeout)

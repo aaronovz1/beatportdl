@@ -26,6 +26,8 @@ Existing-file checks still use the target directory and embedded track identity;
 
 Use a download directory that other users cannot modify. BeatportDL rejects unsafe directory permissions, linked subfolders, and linked audio or cover destinations. Set `downloads_directory` to the actual library location rather than placing links inside it.
 
+With `keep_cover` enabled, standalone track downloads that share a genre folder use `cover-<release-id>.jpg` so different releases do not replace each other's artwork.
+
 ## Setup
 
 1. [Download](https://github.com/aaronovz1/beatportdl/releases/) or [build](#building) BeatportDL.
@@ -79,7 +81,7 @@ This will create a new `beatportdl-config.yml` file. You can put the following o
 | `artists_limit`               | 3                                         | Integer    | Maximum number of artists allowed before replacing with `artists_short_form` (affects directories, filenames, and search results)                                                         |
 | `artists_short_form`          | VA                                        | String     | Custom string to represent "Various Artists"                                                                                                                                              |
 | `key_system`                  | standard-short                            | String     | Music key system used in filenames and tags                                                                                                                                               |
-| `proxy`                       |                                           | String     | Proxy URL                                                                                                                                                                                 |
+| `proxy`                       |                                           | String     | Proxy URL for API and media requests (`http`, `https`, `socks5`, or `socks5h`); invalid values stop startup                                                                                 |
 
 If the Beatport credentials are correct, you should also see the file `beatportdl-credentials.json` appear in the BeatportDL directory.
 _If you accidentally entered an incorrect password and got an error, you can always manually edit the config file_
@@ -242,7 +244,11 @@ Boolean flags without a value enable the option. Use `--fix-tags=false` to disab
 ./beatportdl --tag-mappings='{"m4a":{"track_bpm":"BPM_raw","track_name":"TITLE"}}' tracks.txt
 ```
 
-Use `--help` to list flags without loading the config file or logging in. `-q` exits after downloads finish. Prefer keeping passwords in the config file because command-line passwords can appear in shell history and process listings. First-run config creation still uses the setup prompts.
+Use `--help` to list flags without loading the config file or logging in. `-q` exits after downloads finish and reports failures with a nonzero exit status. First-run config creation still uses the setup prompts.
+
+Keep credentials in the private config file or use `--password-stdin` and `--proxy-stdin` with a password manager or another trusted input source. Each flag reads one line from redirected stdin, in the order the flags appear. Avoid literal passwords or authenticated proxy URLs in command-line arguments: they can appear in shell history and process listings.
+
+Legacy token caches are cleared on first use and rebuilt on the next successful login. The new cache is bound to the configured account and does not store a password fingerprint.
 
 ## Development
 

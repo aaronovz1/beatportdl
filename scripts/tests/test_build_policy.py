@@ -38,7 +38,7 @@ class DockerBoundary(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.repo = self.root / "checkout"
         self.repo.mkdir()
         self.tools = self.root / "tools"
@@ -52,6 +52,8 @@ record = {'args': args}
 if args[0] == 'build':
     context = pathlib.Path(args[-1])
     record['files'] = sorted(str(p.relative_to(context)) for p in context.rglob('*') if p.is_file())
+    record['dockerfile'] = pathlib.Path(args[args.index('-f') + 1]).read_text()
+    record['executable'] = bool((context / 'scripts/zig-ar.sh').stat().st_mode & 0o100)
 else:
     for i, arg in enumerate(args):
         if arg == '--mount':
@@ -67,12 +69,14 @@ with open(os.environ['DOCKER_TEST_LOG'], 'a') as f:
         stub.chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.tools) + os.pathsep + os.environ["PATH"],
                         WORKSPACE_DIR=str(self.repo), DOCKER_TEST_LOG=str(self.log))
+        self.env.pop("DOCKERFILE_PATH", None)
         run(["git", "init", "-q", str(self.repo)], check=True)
         for name in ("Dockerfile.build", "scripts/docker-builder-entrypoint.sh",
                      "scripts/zig-ar.sh", "scripts/zig-ranlib.sh"):
             dest = self.repo / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, dest)
+        (self.repo / "scripts/zig-ar.sh").chmod(0o755)
         self.write("cmd/main.go", "package main\n")
         self.write("go.mod", "module example\ngo 1.27.4\n")
         self.write("Makefile", "all:\n\ttrue\n")
@@ -96,9 +100,9 @@ with open(os.environ['DOCKER_TEST_LOG'], 'a') as f:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(contents)
 
-    def invoke(self):
-        return run(["sh", str(ROOT / "scripts/docker-build.sh"), "pure-test"],
-                   cwd=self.repo, env=self.env)
+    def invoke(self, command="pure-test"):
+        return run(["sh", str(ROOT / "scripts/docker-build.sh"), command],
+                   cwd=self.repo, env=self.env, timeout=10)
 
     def test_snapshot_and_container_boundary(self):
         result = self.invoke()
@@ -106,6 +110,7 @@ with open(os.environ['DOCKER_TEST_LOG'], 'a') as f:
         records = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertEqual(records[0]["files"], ["Dockerfile.build", "scripts/docker-builder-entrypoint.sh",
                                              "scripts/zig-ar.sh", "scripts/zig-ranlib.sh"])
+        self.assertTrue(records[0]["executable"], "context must retain the helper's execute bit")
         record = records[-1]
         self.assertEqual(record.get("files"), ["Makefile", "cmd/main.go", "config/credentials_security_test.go",
                                               "go.mod", "internal/new.go", "internal/securefile/security_test.go"])
@@ -126,6 +131,70 @@ with open(os.environ['DOCKER_TEST_LOG'], 'a') as f:
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("symlink", result.stderr.lower())
 
+    def assert_context_rejected(self):
+        for command in ("build-image", "pure-test"):
+            with self.subTest(command=command):
+                result = self.invoke(command)
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(self.log.exists(), "Docker must not receive an invalid context")
+
+    def test_context_rejects_linked_dockerfile(self):
+        dockerfile = self.repo / "Dockerfile.build"
+        dockerfile.unlink()
+        dockerfile.symlink_to(self.repo / "Makefile")
+        self.assert_context_rejected()
+
+    def test_context_rejects_linked_helper(self):
+        helper = self.repo / "scripts/zig-ar.sh"
+        helper.unlink()
+        helper.symlink_to("zig-ranlib.sh")
+        self.assert_context_rejected()
+
+    def test_context_rejects_linked_helper_parent(self):
+        helpers = self.repo / "scripts"
+        moved = self.root / "helpers"
+        helpers.rename(moved)
+        helpers.symlink_to(moved, target_is_directory=True)
+        self.assert_context_rejected()
+
+    def test_context_rejects_linked_workspace_ancestor(self):
+        alias = self.root / "alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.env["WORKSPACE_DIR"] = str(alias / self.repo.name)
+        self.assert_context_rejected()
+
+    def test_context_rejects_non_regular_helper(self):
+        helper = self.repo / "scripts/zig-ar.sh"
+        helper.unlink()
+        os.mkfifo(helper)
+        self.assert_context_rejected()
+
+    def test_context_rejects_untracked_dockerfile_override(self):
+        self.write("Dockerfile.local", "FROM scratch\n")
+        self.env["DOCKERFILE_PATH"] = "Dockerfile.local"
+        self.assert_context_rejected()
+
+    def test_context_rejects_non_regular_index_entry(self):
+        helper = self.repo / "scripts/zig-ar.sh"
+        helper.unlink()
+        helper.symlink_to("zig-ranlib.sh")
+        run(["git", "-C", str(self.repo), "-c", "core.symlinks=true", "add", "scripts/zig-ar.sh"], check=True)
+        helper.unlink()
+        self.write("scripts/zig-ar.sh", "#!/bin/sh\n")
+        self.assert_context_rejected()
+
+    def test_context_accepts_tracked_dockerfile_override(self):
+        self.write("build/Dockerfile.local", "FROM scratch\n")
+        run(["git", "-C", str(self.repo), "add", "build/Dockerfile.local"], check=True)
+        self.write("build/Dockerfile.local", "FROM scratch\n# working tree edit\n")
+        for override in ("build/Dockerfile.local", str(self.repo / "build/Dockerfile.local")):
+            with self.subTest(override=override):
+                self.env["DOCKERFILE_PATH"] = override
+                result = self.invoke("build-image")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                record = json.loads(self.log.read_text().splitlines()[-1])
+                self.assertEqual(record["dockerfile"], "FROM scratch\n# working tree edit\n")
+
 
 class NativeLinkPolicy(unittest.TestCase):
     def test_darwin_dependency_libraries_precede_sdk_libraries(self):
@@ -141,23 +210,80 @@ if sys.argv[1] == 'build':
     pathlib.Path(os.environ['GO_TEST_LOG']).write_text(json.dumps({
         'flags': os.environ['CGO_LDFLAGS'], 'goos': os.environ['GOOS'],
         'goarch': os.environ['GOARCH'], 'sdk': os.environ['SDKROOT'],
+        'includes': [os.environ[name] for name in ('CGO_CPPFLAGS', 'CGO_CFLAGS', 'CGO_CXXFLAGS')],
+        'cache': os.environ['GOCACHE'],
     }))
+elif sys.argv[1:] == ['env', 'GOCACHE']:
+    print(os.environ['GOCACHE'])
+else:
+    raise SystemExit('unexpected go command: ' + repr(sys.argv[1:]))
 """)
             stub.chmod(0o755)
-            prefix, sdk = root / "deps", root / "sdk"
+            prefix, sdk = root / "native deps", root / "macOS SDK"
+            (prefix / "include").mkdir(parents=True)
+            (prefix / "include" / "zlib.h").write_text("fixture header")
+            (prefix / "lib").mkdir()
+            library = prefix / "lib" / "libz.a"
+            library.write_bytes(b"fixture library")
+            shared_cache = root / "shared cache"
             env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
-                       BUILD_DIR=str(root / "output"), MACOS_SDK_PATH=str(sdk), GO_TEST_LOG=str(log))
+                       BUILD_DIR=str(root / "output"), MACOS_SDK_PATH=str(sdk), GO_TEST_LOG=str(log),
+                       GOCACHE=str(shared_cache))
+
+            def build_for(arch):
+                result = run(["bash", str(ROOT / "scripts/build-release-target.sh"),
+                              "darwin-" + arch, str(prefix)], env=env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return json.loads(log.read_text())
+
+            caches = set()
             for arch in ("arm64", "amd64"):
                 with self.subTest(arch=arch):
-                    result = run(["bash", str(ROOT / "scripts/build-release-target.sh"),
-                                  "darwin-" + arch, str(prefix)], env=env)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    build = json.loads(log.read_text())
+                    build = build_for(arch)
                     flags = shlex.split(build["flags"])
                     self.assertEqual((build["goos"], build["goarch"], build["sdk"]), ("darwin", arch, str(sdk)))
                     self.assertLess(flags.index("-L" + str(prefix / "lib")),
                                     flags.index("-L" + str(sdk / "usr/lib")),
                                     "pinned zlib must take precedence over SDK zlib")
+                    self.assertIn("-F" + str(sdk / "System/Library/Frameworks"), flags)
+                    for include in build["includes"]:
+                        self.assertIn("-I" + str(prefix / "include"), shlex.split(include))
+                    cache = Path(build["cache"])
+                    self.assertIn(shared_cache, cache.parents)
+                    self.assertEqual(build_for(arch)["cache"], str(cache))
+                    caches.add(str(cache))
+            self.assertEqual(len(caches), 2, "separate architectures must use distinct native caches")
+            library.write_bytes(b"updated library")
+            self.assertNotIn(build_for("arm64")["cache"], caches, "replacing a static library must invalidate its cache")
+
+
+class ReleaseNotesPolicy(unittest.TestCase):
+    def test_exact_versions_and_no_placeholder_notes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            script = scripts / "release-notes.sh"
+            shutil.copyfile(ROOT / "scripts" / script.name, script)
+            (root / "CHANGELOG.md").write_text(
+                "# Changelog\n\n## v1.0.13 - 2026-09-27\n\nDifferent release.\n"
+                "## v1.0.1 - 2026-01-01\n\nExact notes.\n### Details\nMore notes.\n"
+                "## v1.0.1-rc2\n\nCandidate-specific notes.\n"
+                "## v1.0.2\n\n\n## v1.0.4\nFirst.\n## v1.0.4\nSecond.\n"
+            )
+            for tag, expected in (("v1.0.1", "Exact notes"), ("v1.0.1-rc1", "Exact notes"),
+                                  ("v1.0.1-rc2", "Candidate-specific notes")):
+                with self.subTest(tag=tag):
+                    result = run(["bash", str(script), tag])
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(expected, result.stdout)
+                    self.assertNotIn("Different release", result.stdout)
+                    self.assertEqual("release candidate" in result.stdout, "-rc" in tag)
+            for tag in ("v1.0.2", "v1.0.3", "v1.0.4", "v1.0.13-rc-not-a-number"):
+                with self.subTest(tag=tag):
+                    result = run(["bash", str(script), tag])
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, "")
 
 
 class NativeCache(unittest.TestCase):
@@ -350,6 +476,9 @@ class ImmutablePins(unittest.TestCase):
         jobs = workflows()["release.yml"]["jobs"]
         gate = jobs["release-gate"]
         validator = gate["steps"][0]["run"]
+        notes_steps = [i for i, step in enumerate(gate["steps"]) if "release-notes.sh" in step.get("run", "")]
+        self.assertEqual(len(notes_steps), 1)
+        self.assertLess(notes_steps[0], len(gate["steps"]) - 1)
         self.assertIn("scripts/docker-build.sh test", gate["steps"][-1]["run"])
         for name, job in jobs.items():
             if name == "release-gate":

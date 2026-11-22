@@ -28,48 +28,47 @@ func trackPathKey(path string) string {
 }
 
 func (app *application) claimTrackPath(directory, name, ext string, track *beatport.Track) (string, func(), error) {
-	identity := trackPathKey(directory) + "\x00" + ext + "\x00" + strconv.FormatInt(track.ID, 10)
+	state := app.trackDirectory(directory)
+	identity := "\x00" + strings.ToLower(ext) + "\x00" + strconv.FormatInt(track.ID, 10)
 	// Track IDs coalesce overlapping collection entries even if their rendered
 	// names differ while a write is in progress. The path also guards ID-less rows.
 	for {
+		state.Lock()
 		if err := app.context().Err(); err != nil {
+			state.Unlock()
 			return "", nil, err
 		}
-		app.activeFilesMutex.Lock()
 		var wait chan struct{}
 		if track.ID != 0 {
-			wait = app.activeTrackWrites[identity]
+			wait = state.writes[identity]
 		}
 		if wait == nil {
-			path, err := app.reserveTrackPathLocked(directory, name, ext, track.ID, track.ISRC)
+			path, err := app.reserveTrackPathInDirectory(state, directory, name, ext, track.ID, track.ISRC)
 			if path == "" || err != nil {
-				app.activeFilesMutex.Unlock()
+				state.Unlock()
 				return path, nil, err
 			}
 			key := trackPathKey(path)
-			wait = app.activeTrackWrites[key]
+			wait = state.writes[key]
 			if wait == nil {
 				done := make(chan struct{})
-				if app.activeTrackWrites == nil {
-					app.activeTrackWrites = make(map[string]chan struct{})
-				}
-				app.activeTrackWrites[key] = done
+				state.writes[key] = done
 				if track.ID != 0 {
-					app.activeTrackWrites[identity] = done
+					state.writes[identity] = done
 				}
-				app.activeFilesMutex.Unlock()
+				state.Unlock()
 				return path, func() {
-					app.activeFilesMutex.Lock()
-					defer app.activeFilesMutex.Unlock()
-					delete(app.activeTrackWrites, key)
+					state.Lock()
+					defer state.Unlock()
+					delete(state.writes, key)
 					if track.ID != 0 {
-						delete(app.activeTrackWrites, identity)
+						delete(state.writes, identity)
 					}
 					close(done)
 				}, nil
 			}
 		}
-		app.activeFilesMutex.Unlock()
+		state.Unlock()
 		select {
 		case <-wait:
 		case <-app.context().Done():

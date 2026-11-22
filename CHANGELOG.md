@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Upgrade to Go 1.27.4. Native builds handle paths containing spaces and isolate
+  their dependency caches without clearing the shared Go cache. Require exact,
+  nonempty changelog entries before release builds.
+- Preserve existing audio when transfers or tag writes fail. Serialize track
+  writes, avoid case-only filename collisions, and reject unsafe destinations.
+- Fix playlist and chart handling for unresolved first genres, incomplete BPM
+  ranges, sparse track metadata, and repeated pages.
+- Apply explicit proxies to API and media traffic, redact signed URLs in logs,
+  suppress media redirect referrers, and resolve HLS resources after redirects.
+- Remove password fingerprints from token caches (one login may be needed),
+  support reading CLI secrets from redirected stdin, and bound API, artwork,
+  and FFmpeg resource usage.
+- Improve batch exit status, interrupted downloads, piped input, filename
+  compatibility, terminal output safety, and artwork handling. Reduce duplicate
+  metadata and cover requests and memory usage during HLS downloads.
+- Reject linked build-context inputs and stream legacy error logs when tightening
+  their permissions.
+
 ## v1.2.0 - 2026-10-22
 
 This release focuses on safer downloads, reliable playlist updates, bounded background work, and hardened builds. It also completes the removal of standalone Beatsource support.

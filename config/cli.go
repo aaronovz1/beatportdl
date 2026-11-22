@@ -11,15 +11,42 @@ import (
 )
 
 type CommandLineOptions struct {
-	Quit      bool
-	Args      []string
-	overrides []func(*AppConfig)
+	Quit               bool
+	Args               []string
+	overrides          []func(*AppConfig)
+	secrets            []*stdinSecret
+	passwordOverridden bool
+}
+
+type stdinSecret struct {
+	flag  string
+	value string
 }
 
 func (o *CommandLineOptions) Apply(cfg *AppConfig) {
 	for _, override := range o.overrides {
 		override(cfg)
 	}
+}
+
+func (o *CommandLineOptions) PasswordOverridden() bool {
+	return o.passwordOverridden
+}
+
+// ReadSecrets reads one redirected stdin line per secret flag, in argument order.
+// Call it before applying the overrides. It does not echo values or input errors.
+func (o *CommandLineOptions) ReadSecrets(readLine func() (string, error)) error {
+	for _, secret := range o.secrets {
+		value, err := readLine()
+		if err != nil {
+			return fmt.Errorf("--%s: could not read a line from redirected stdin: %w", secret.flag, err)
+		}
+		if secret.flag == "password-stdin" && value == "" {
+			return fmt.Errorf("--password-stdin: password is empty")
+		}
+		secret.value = value
+	}
+	return nil
 }
 
 func ParseCommandLine(args []string, output io.Writer) (*CommandLineOptions, error) {
@@ -29,6 +56,7 @@ func ParseCommandLine(args []string, output io.Writer) (*CommandLineOptions, err
 	flags.Usage = func() {
 		fmt.Fprintln(output, "Usage: beatportdl [options] [URL or text file ...]")
 		fmt.Fprintln(output, "Explicit options override the config file for this run. Put options before URLs or files.")
+		fmt.Fprintln(output, "Stdin secret options consume one redirected line each, in option order.")
 		flags.PrintDefaults()
 	}
 	flags.BoolVar(&opts.Quit, "q", false, "Quit the main loop after finishing")
@@ -59,9 +87,34 @@ func ParseCommandLine(args []string, output io.Writer) (*CommandLineOptions, err
 			return nil
 		})
 	}
+	secretStdinFlag := func(name, usage string, set func(*AppConfig, string)) {
+		flags.BoolFunc(name, usage, func(raw string) error {
+			value, err := strconv.ParseBool(raw)
+			if err != nil {
+				return fmt.Errorf("expected true or false")
+			}
+			if value {
+				secret := &stdinSecret{flag: name}
+				opts.secrets = append(opts.secrets, secret)
+				opts.overrides = append(opts.overrides, func(cfg *AppConfig) { set(cfg, secret.value) })
+				if name == "password-stdin" {
+					opts.passwordOverridden = true
+				}
+			}
+			return nil
+		})
+	}
 
 	stringFlag("username", "Beatport username", func(c *AppConfig, v string) { c.Username = v })
-	stringFlag("password", "Beatport password", func(c *AppConfig, v string) { c.Password = v })
+	flags.Func("password", "Beatport password (prefer --password-stdin)", func(value string) error {
+		if value != "" {
+			fmt.Fprintln(output, "Warning: --password exposes secrets in command arguments and possibly shell history; use --password-stdin instead.")
+		}
+		opts.passwordOverridden = true
+		opts.overrides = append(opts.overrides, func(cfg *AppConfig) { cfg.Password = value })
+		return nil
+	})
+	secretStdinFlag("password-stdin", "Read the Beatport password from redirected stdin", func(c *AppConfig, v string) { c.Password = v })
 	stringFlag("quality", "Download quality: medium-hls, medium, high, lossless", func(c *AppConfig, v string) { c.Quality = v })
 	boolFlag("write-error-log", "Write errors to the error log", func(c *AppConfig, v bool) { c.WriteErrorLog = v })
 	boolFlag("show-progress", "Show download progress bars", func(c *AppConfig, v bool) { c.ShowProgress = v })
@@ -86,7 +139,14 @@ func ParseCommandLine(args []string, output io.Writer) (*CommandLineOptions, err
 	stringFlag("cover-size", "Cover art size", func(c *AppConfig, v string) { c.CoverSize = v })
 	boolFlag("keep-cover", "Keep cover.jpg in context directories", func(c *AppConfig, v bool) { c.KeepCover = v })
 	boolFlag("fix-tags", "Write audio metadata tags", func(c *AppConfig, v bool) { c.FixTags = v })
-	stringFlag("proxy", "Proxy URL", func(c *AppConfig, v string) { c.Proxy = v })
+	flags.Func("proxy", "Proxy URL (use --proxy-stdin for credentials)", func(value string) error {
+		if strings.Contains(value, "@") {
+			fmt.Fprintln(output, "Warning: --proxy can expose credentials in command arguments and possibly shell history; use --proxy-stdin instead.")
+		}
+		opts.overrides = append(opts.overrides, func(cfg *AppConfig) { cfg.Proxy = value })
+		return nil
+	})
+	secretStdinFlag("proxy-stdin", "Read the proxy URL from redirected stdin", func(c *AppConfig, v string) { c.Proxy = v })
 	flags.Func("tag-mappings", "Tag mappings as a YAML or JSON map (replaces configured mappings)", func(raw string) error {
 		var mappings map[string]map[string]string
 		decoder := yaml.NewDecoder(strings.NewReader(raw))

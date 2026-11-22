@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"unspok3n/beatportdl/config"
 	"unspok3n/beatportdl/internal/beatport"
@@ -465,4 +466,162 @@ func TestConcurrentReservationsReuseExistingCollisionFiles(t *testing.T) {
 		}(i)
 	}
 	workers.Wait()
+}
+
+func TestTrackCollisionFitsFilenameWithSuffixAndExtension(t *testing.T) {
+	dir := t.TempDir()
+	app := newTestApplication("update")
+	name := strings.Repeat("\u754c", 100)
+	for i := range 12 {
+		path, release, err := app.claimTrackPath(dir, name, ".flac", &beatport.Track{ID: int64(i + 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		release()
+		component := filepath.Base(path)
+		wantSuffix := ".flac"
+		if i > 0 {
+			wantSuffix = fmt.Sprintf(" (%d).flac", i)
+		}
+		if len(component) > 255 || !utf8.ValidString(component) || !strings.HasSuffix(component, wantSuffix) {
+			t.Fatalf("component (%d bytes) = %q, want valid UTF-8 ending in %q", len(component), component, wantSuffix)
+		}
+	}
+}
+
+func TestColdIdentityReadDoesNotBlockOtherDirectory(t *testing.T) {
+	slowDir, fastDir := t.TempDir(), t.TempDir()
+	slowPath := filepath.Join(slowDir, "Existing.flac")
+	fastPath := filepath.Join(fastDir, "Existing.flac")
+	for _, path := range []string{slowPath, fastPath} {
+		if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := newTestApplication("update")
+	started := make(chan struct{})
+	unblock := make(chan struct{})
+	var once sync.Once
+	app.readTrackFileIdentity = func(path string) (trackFileIdentity, error) {
+		if path == slowPath {
+			once.Do(func() { close(started) })
+			<-unblock
+		}
+		return trackFileIdentity{TrackID: "101"}, nil
+	}
+	slowDone, fastDone := make(chan struct{}), make(chan struct{})
+	var fastStarted bool
+	go func() {
+		defer close(slowDone)
+		path, release, err := app.claimTrackPath(slowDir, "New", ".flac", &beatport.Track{ID: 101})
+		if path != slowPath || err != nil {
+			t.Errorf("slow claim = %q, %v; want %q", path, err, slowPath)
+		}
+		if release != nil {
+			release()
+		}
+	}()
+	defer func() {
+		close(unblock)
+		<-slowDone
+		if fastStarted {
+			<-fastDone
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cold scan did not reach the identity reader")
+	}
+	fastStarted = true
+	go func() {
+		defer close(fastDone)
+		track := &beatport.Track{ID: 101}
+		path, release, err := app.claimTrackPath(fastDir, "New", ".flac", track)
+		if path != fastPath || err != nil {
+			t.Errorf("fast claim = %q, %v; want %q", path, err, fastPath)
+			return
+		}
+		app.rememberCompletedTrackFile(path, track)
+		release()
+	}()
+	// The failure path must also let both goroutines exit before cleanup.
+	select {
+	case <-fastDone:
+	case <-time.After(2 * time.Second):
+		t.Error("unrelated claim and completion waited for the blocked reader")
+	}
+}
+
+func TestWarmIdentityMissDiscoversImportedTrack(t *testing.T) {
+	for _, initialReadFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("initial read fails: %v", initialReadFails), func(t *testing.T) {
+			dir := t.TempDir()
+			if initialReadFails {
+				dir = filepath.Join(dir, "not yet created")
+			}
+			app := identityTestApplication("skip")
+			if _, err := app.reserveTrackFilePath(dir, "Unrelated", ".flac", 101, ""); err != nil {
+				t.Fatal(err)
+			}
+			if initialReadFails {
+				if err := os.Mkdir(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeIdentityAudio(t, filepath.Join(dir, "Imported.flac"), "202", "")
+			if got, err := app.reserveTrackFilePath(dir, "Corrected", ".flac", 202, ""); got != "" || err != nil {
+				t.Fatalf("imported track = %q, %v; want skipped", got, err)
+			}
+		})
+	}
+}
+
+func TestWarmIdentityMissProbesForInPlaceRetags(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Existing.flac")
+	writeIdentityAudio(t, path, "101", "")
+	app := identityTestApplication("skip")
+	if got, err := app.reserveTrackFilePath(dir, "Corrected", ".flac", 101, ""); got != "" || err != nil {
+		t.Fatalf("initial lookup = %q, %v; want skipped", got, err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeIdentityAudio(t, path, "202", "")
+	if err := os.Chtimes(path, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	current, err := os.Stat(path)
+	if err != nil || !sameTrackSnapshot(before, current) {
+		t.Fatalf("retag must retain inode, size, and mtime: %v", err)
+	}
+	if got, err := app.reserveTrackFilePath(dir, "Corrected", ".flac", 202, ""); got != "" || err != nil {
+		t.Fatalf("retagged track = %q, %v; want skipped", got, err)
+	}
+}
+
+func TestWarmIdentityMissBoundsMetadataReads(t *testing.T) {
+	dir := t.TempDir()
+	const files, misses = 16, 32
+	for i := range files {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%02d.flac", i)), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := newTestApplication("skip")
+	reads := 0
+	app.readTrackFileIdentity = func(path string) (trackFileIdentity, error) {
+		reads++
+		return trackFileIdentity{TrackID: strings.TrimSuffix(filepath.Base(path), ".flac")}, nil
+	}
+	for i := range misses {
+		if _, err := app.reserveTrackFilePath(dir, "Missing", ".flac", int64(100+i), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reads > files+misses {
+		t.Fatalf("metadata reads = %d, want at most %d", reads, files+misses)
+	}
 }

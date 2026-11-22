@@ -3,6 +3,7 @@ package beatport
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -87,6 +88,10 @@ func (r *Release) DirectoryName(n NamingPreferences) string {
 		"upc":            r.UPC,
 		"label":          SanitizeForPath(r.Label.Name),
 	}
-	directoryName := ParseTemplate(n.Template, templateValues)
-	return SanitizeDirectoryPath(directoryName, n.Whitespace)
+	// Only separators written in the template define the directory layout.
+	components := strings.Split(n.Template, "/")
+	for i, component := range components {
+		components[i] = SanitizePath(ParseTemplate(component, templateValues), n.Whitespace)
+	}
+	return strings.Join(components, "/")
 }

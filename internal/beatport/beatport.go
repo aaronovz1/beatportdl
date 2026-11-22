@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -35,18 +36,30 @@ type APIError struct {
 	StatusCode int
 	Detail     string
 	Endpoint   string
+	cause      error
 }
+
+func (e *APIError) Unwrap() error { return e.cause }
 
 func (e *APIError) Error() string {
 	message := fmt.Sprintf("request failed with status code: %d", e.StatusCode)
 	if e.Detail != "" {
 		message = fmt.Sprintf("%s - %s", message, e.Detail)
 	}
+	if e.cause != nil {
+		message = fmt.Sprintf("%s - %s", message, e.cause)
+	}
 	if hint := e.Hint(); hint != "" {
 		message = fmt.Sprintf("%s (hint: %s)", message, hint)
 	}
 	return message
 }
+
+// Transport errors can include an authorization redirect URL and its code.
+type authRequestError struct{ cause error }
+
+func (e authRequestError) Error() string { return "authentication request failed" }
+func (e authRequestError) Unwrap() error { return e.cause }
 
 func (e *APIError) Hint() string {
 	detail := strings.ToLower(e.Detail)
@@ -109,12 +122,10 @@ type Paginated[T any] struct {
 	Results  []T     `json:"results"`
 }
 
-func New(proxyUrl string, auth *Auth) *Beatport {
+func New(proxyURL *url.URL, auth *Auth) *Beatport {
 	transport := &http.Transport{}
-	if proxyUrl != "" {
-		proxyURL, _ := url.Parse(proxyUrl)
-		proxy := http.ProxyURL(proxyURL)
-		transport.Proxy = proxy
+	if proxyURL != nil {
+		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 	headers := map[string]string{
 		"accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -213,10 +224,26 @@ func (b *Beatport) fetchWithHeaders(method, endpoint string, payload interface{}
 
 		resp, err := b.doRequest(req)
 		if err != nil {
+			if isAuthRequest && b.requestContext().Err() == nil {
+				return nil, authRequestError{cause: err}
+			}
 			return nil, fmt.Errorf("request failed: %w", err)
 		}
 
 		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusFound {
+			// Login and authorize only consume headers; never read their bodies.
+			if endpoint == loginEndpoint || endpoint == authEndpoint {
+				return resp, nil
+			}
+			limit := int64(maxAPIJSONBytes)
+			if isAuthRequest {
+				limit = maxSmallJSONBytes
+			}
+			data, err := readAPIJSON(resp, limit)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewReader(data))
 			return resp, nil
 		}
 		if resp.StatusCode == http.StatusUnauthorized && !isAuthRequest && attempt == 0 {
@@ -226,25 +253,27 @@ func (b *Beatport) fetchWithHeaders(method, endpoint string, payload interface{}
 			}
 			continue
 		}
-		defer resp.Body.Close()
-		response := &FetcherError{}
-		if err = json.NewDecoder(resp.Body).Decode(response); err == nil {
-			detail := ""
+		apiErr := &APIError{StatusCode: resp.StatusCode, Endpoint: endpoint}
+		data, err := readAPIJSON(resp, maxSmallJSONBytes)
+		if errors.Is(err, ErrResponseTooLarge) {
+			apiErr.cause = ErrResponseTooLarge
+		}
+		// Auth responses may echo credentials or one-time codes; retain only status.
+		var response FetcherError
+		if !isAuthRequest && err == nil && json.Unmarshal(data, &response) == nil {
+			var detail string
 			if response.Detail != nil {
 				detail = *response.Detail
 			} else if response.Error != nil {
 				detail = *response.Error
 			}
-			return nil, &APIError{
-				StatusCode: resp.StatusCode,
-				Detail:     detail,
-				Endpoint:   endpoint,
+			secrets := []string{b.auth.username, b.auth.password}
+			if token != nil {
+				secrets = append(secrets, token.AccessToken, token.RefreshToken)
 			}
+			apiErr.Detail = SanitizeLogMessage(detail, secrets...)
 		}
-		return nil, &APIError{
-			StatusCode: resp.StatusCode,
-			Endpoint:   endpoint,
-		}
+		return nil, apiErr
 	}
 }
 

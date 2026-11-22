@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var logURLPattern = regexp.MustCompile(`https?://[^\s"'<>]+`)
+var logURLPattern = regexp.MustCompile(`(?i:https?)://[^\s"'<>]+`)
 
 // SanitizeLogMessage retains request destinations but never URL credentials,
 // fragments, signed query values, or the caller's known account secrets.

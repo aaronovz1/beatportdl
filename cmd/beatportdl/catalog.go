@@ -22,13 +22,25 @@ type catalogRelease struct {
 }
 
 func (app *application) handleCatalogTracks(inst *beatport.Beatport, link *beatport.Link, downloadsDir string, source catalogTrackSource) error {
-	releaseDirectories := app.config.ForceReleaseDirectories
+	releaseDirectories := app.config.SortByContext && app.config.ForceReleaseDirectories
 	var wg sync.WaitGroup
 	var releasesMutex sync.Mutex
 	releases := make(map[int64]*catalogRelease)
 	err := forPaginatedWorkers[beatport.Track](&wg, link.ID, link.Params, source.fetchPage, func(track beatport.Track, _ int) error {
 		app.downloadWorker(&wg, func() {
 			trackURL := track.StoreUrl()
+			var media *trackMedia
+			if !releaseDirectories && app.config.TrackExists == "skip" {
+				var err error
+				media, err = app.fetchTrackMedia(inst, track.ID, app.config.Quality)
+				if err != nil {
+					app.errorLogWrapper(trackURL, "fetch track media", err)
+					return
+				}
+				if app.skipCollectionTrack(&track, downloadsDir, media) {
+					return
+				}
+			}
 			fullTrack, err := source.fetchTrack(track.ID)
 			if err != nil {
 				app.errorLogWrapper(trackURL, "fetch full track", err)
@@ -64,7 +76,14 @@ func (app *application) handleCatalogTracks(inst *beatport.Beatport, link *beatp
 				return
 			}
 			fullTrack.Release = *state.release
-			processed, err := app.handleTrack(inst, fullTrack, state.directory, state.cover)
+			if media == nil {
+				media, err = app.fetchTrackMedia(inst, track.ID, app.config.Quality)
+				if err != nil {
+					app.errorLogWrapper(trackURL, "fetch track media", err)
+					return
+				}
+			}
+			processed, err := app.handleTrackMedia(fullTrack, state.directory, state.cover, media)
 			if err != nil {
 				app.errorLogWrapper(trackURL, "handle track", err)
 				return

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,35 +10,42 @@ import (
 	"strings"
 	"unspok3n/beatportdl/config"
 	"unspok3n/beatportdl/internal/beatport"
-
-	"golang.org/x/term"
 )
 
 func Setup(overrides ...func(*config.AppConfig)) (cfg *config.AppConfig, cachePath string, err error) {
+	return setupConfig(newCLIInput(context.Background(), os.Stdin), false, overrides...)
+}
+
+func setupConfig(input *cliInput, passwordOverridden bool, overrides ...func(*config.AppConfig)) (*config.AppConfig, string, error) {
+	if err := input.ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	configFilePath, exists, err := FindConfigFile()
 	if err != nil {
 		return nil, "", err
 	}
 
 	if !exists {
-		fmt.Println("Config file not found, creating a new one:", configFilePath)
+		fmt.Println("Config file not found, creating a new one:", presentationText(configFilePath))
 
 		fmt.Print("Username: ")
-		username := GetLine()
-		fmt.Print("Password: ")
+		username, err := input.line()
+		if err != nil {
+			return nil, configFilePath, fmt.Errorf("read username: %w", err)
+		}
 		var password string
-		if term.IsTerminal(int(os.Stdin.Fd())) {
-			passwordBytes, readErr := term.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Println()
-			if readErr != nil {
-				return nil, configFilePath, fmt.Errorf("read password: %w", readErr)
+		if !passwordOverridden {
+			fmt.Print("Password: ")
+			password, err = input.password()
+			if err != nil {
+				return nil, configFilePath, fmt.Errorf("read password: %w", err)
 			}
-			password = string(passwordBytes)
-		} else {
-			password = GetLine()
 		}
 		fmt.Print("Downloads directory: ")
-		downloadsDir := GetLine()
+		downloadsDir, err := input.line()
+		if err != nil {
+			return nil, configFilePath, fmt.Errorf("read downloads directory: %w", err)
+		}
 
 		cfg := config.DefaultConfig()
 		cfg.Username = username
@@ -47,7 +55,10 @@ func Setup(overrides ...func(*config.AppConfig)) (cfg *config.AppConfig, cachePa
 		fmt.Println("1. Lossless (44.1 khz FLAC)\n2. High (256 kbps AAC)\n3. Medium (128 kbps AAC)\n4. Medium HLS (128 kbps AAC)")
 		for {
 			fmt.Print("Quality: ")
-			qualityNumber := GetLine()
+			qualityNumber, err := input.line()
+			if err != nil {
+				return nil, configFilePath, fmt.Errorf("read quality: %w", err)
+			}
 			switch qualityNumber {
 			case "1":
 				cfg.Quality = "lossless"
@@ -64,6 +75,9 @@ func Setup(overrides ...func(*config.AppConfig)) (cfg *config.AppConfig, cachePa
 			break
 		}
 
+		if err := input.ctx.Err(); err != nil {
+			return nil, configFilePath, err
+		}
 		if err := cfg.Save(configFilePath); err != nil {
 			return nil, configFilePath, fmt.Errorf("save config: %w", err)
 		}
@@ -82,41 +96,45 @@ func Setup(overrides ...func(*config.AppConfig)) (cfg *config.AppConfig, cachePa
 	return parsedConfig, cacheFilePath, nil
 }
 
-func (app *application) mainPrompt() {
-	// The previous download's progress writer may already be shut down.
-	app.logWriter = os.Stdout
+func (app *application) mainPrompt(reader *cliInput) error {
 	fmt.Print("Enter url or search query: ")
-	input := GetLine()
+	input, err := reader.line()
+	if err != nil {
+		return err
+	}
 	if lower := strings.ToLower(input); strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://") {
 		app.urls = append(app.urls, input)
-	} else {
-		app.search(input)
+		return nil
 	}
+	if strings.TrimSpace(input) == "" {
+		return nil
+	}
+	return app.search(input, reader)
 }
 
-func (app *application) search(input string) {
+func (app *application) search(input string, reader *cliInput) error {
 	query, err := beatportSearchQuery(input)
 	if err != nil {
 		app.LogError("search", err)
-		return
+		return nil
 	}
 	results, err := app.bp.Search(query)
 	if err != nil {
-		app.FatalError("beatport", err)
+		return fmt.Errorf("search Beatport: %w", err)
 	}
 	trackResultsLen := len(results.Tracks)
 	releasesResultsLen := len(results.Releases)
 
 	if trackResultsLen+releasesResultsLen == 0 {
 		fmt.Println("No results found")
-		return
+		return nil
 	}
 
 	fmt.Println("Search results:")
 	fmt.Println("[ Tracks ]")
 	for i, track := range results.Tracks {
-		fmt.Printf(
-			"%2d. %s - %s (%s) [%s]\n", i+1,
+		app.writeLog(presentationText(fmt.Sprintf(
+			"%2d. %s - %s (%s) [%s]", i+1,
 			track.Artists.Display(
 				app.config.ArtistsLimit,
 				app.config.ArtistsShortForm,
@@ -124,28 +142,31 @@ func (app *application) search(input string) {
 			track.Name.String(),
 			track.MixName.String(),
 			track.Length,
-		)
+		)) + "\n")
 	}
 	fmt.Println("\n[ Releases ]")
 	indexOffset := trackResultsLen + 1
 	for i, release := range results.Releases {
-		fmt.Printf(
-			"%2d. %s - %s [%s]\n", i+indexOffset,
+		app.writeLog(presentationText(fmt.Sprintf(
+			"%2d. %s - %s [%s]", i+indexOffset,
 			release.Artists.Display(
 				app.config.ArtistsLimit,
 				app.config.ArtistsShortForm,
 			),
 			release.Name.String(),
 			release.Label.Name,
-		)
+		)) + "\n")
 	}
 	fmt.Print("Enter the result number(s): ")
-	input = GetLine()
-	requestedResults := strings.Split(input, " ")
+	input, err = reader.line()
+	if err != nil {
+		return err
+	}
+	requestedResults := strings.Fields(input)
 	for _, result := range requestedResults {
 		resultInt, err := strconv.Atoi(result)
 		if err != nil {
-			fmt.Printf("invalid result number: %s\n", result)
+			fmt.Printf("invalid result number: %s\n", presentationText(result))
 			continue
 		}
 
@@ -160,6 +181,7 @@ func (app *application) search(input string) {
 			app.urls = append(app.urls, results.Tracks[resultInt-1].URL)
 		}
 	}
+	return nil
 }
 
 func beatportSearchQuery(input string) (string, error) {
@@ -178,18 +200,25 @@ func beatportSearchQuery(input string) (string, error) {
 	return strings.Join(terms, " "), nil
 }
 
-func (app *application) parseTextFile(path string) {
+func (app *application) parseTextFile(path string) error {
 	file, err := os.Open(path)
-	defer file.Close()
 	if err != nil {
-		app.FatalError("read input text file", err)
+		return err
 	}
+	defer file.Close()
 	scanner := bufio.NewScanner(file)
-	scanner.Split(bufio.ScanLines)
+	firstURL := len(app.urls)
 
 	for scanner.Scan() {
+		if err := app.context().Err(); err != nil {
+			return err
+		}
 		app.urls = append(app.urls, scanner.Text())
 	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan %s at line %d: %w", path, len(app.urls)-firstURL+1, err)
+	}
+	return nil
 }
 
 var (

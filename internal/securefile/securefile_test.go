@@ -114,6 +114,68 @@ func TestReadReplacesBroadOwnedFile(t *testing.T) {
 	}
 }
 
+func TestOpenAppendStreamsLegacyLogIntoPrivateReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mode fixture")
+	}
+	const logSize = 8 << 20
+	path := filepath.Join(t.TempDir(), "legacy.log")
+	if err := os.WriteFile(path, []byte("start"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Close()
+	if _, err := legacy.WriteAt([]byte("end"), logSize-3); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Chmod(0644); err != nil {
+		t.Fatal(err)
+	}
+	original, err := legacy.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	f, err := OpenAppend(path)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated >= logSize/2 {
+		t.Errorf("migrating %d log bytes allocated %d heap bytes", logSize, allocated)
+	}
+	if _, err := f.WriteString("-append"); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	info, err := migrated.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 || os.SameFile(original, info) || info.Size() != logSize+7 {
+		t.Fatalf("migration: mode %04o, same inode %v, size %d", info.Mode().Perm(), os.SameFile(original, info), info.Size())
+	}
+	for _, check := range []struct {
+		offset int64
+		want   string
+	}{{0, "start"}, {logSize - 3, "end-append"}} {
+		got := make([]byte, len(check.want))
+		if _, err := migrated.ReadAt(got, check.offset); err != nil || string(got) != check.want {
+			t.Errorf("offset %d: got %q, %v; want %q", check.offset, got, err, check.want)
+		}
+	}
+}
+
 func TestCheckDirectoryDoesNotChangeMode(t *testing.T) {
 	dir := t.TempDir()
 	before, _ := os.Stat(dir)

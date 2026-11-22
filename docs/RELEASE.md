@@ -55,6 +55,10 @@ This fork keeps the `beatportdl` name and publishes maintained-fork releases fro
    codesign --verify --strict bin/beatportdl-darwin-arm64
    ```
 
+   The native build script supports spaces in dependency and SDK paths. It
+   uses Python 3 to fingerprint the native headers and libraries, then caches
+   the build under `GOCACHE/beatportdl-native` by target and fingerprint.
+
    Use `darwin-amd64` on an Intel Mac. Intel cross-builds on arm64 and local
    Windows cross-builds must be identified as such; the release workflow still
    uses native macOS and Windows runners. Inspect signatures and runtime library
@@ -206,6 +210,10 @@ Generate draft notes without creating a tag:
 ```shell
 ./scripts/release-notes.sh vX.Y.Z
 ```
+
+The release gate requires a single, nonempty section with the exact version
+heading. An RC can use its own heading or fall back to the exact base version
+when its heading is absent.
 
 Review the entire commit range since the last release against the changelog,
 including upgrade behavior and any intentionally removed support. Use generic

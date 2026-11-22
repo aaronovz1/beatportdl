@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestParseTemplatePreservesUnknownPlaceholders(t *testing.T) {
@@ -190,5 +191,40 @@ func TestSanitizePathNormalizesTrailingDots(t *testing.T) {
 	want = "Artist"
 	if got != want {
 		t.Fatalf("SanitizePath() = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizePathFitsAfterSubstitutions(t *testing.T) {
+	for _, tc := range []struct{ name, whitespace string }{
+		{strings.Repeat("a", 248) + "\u754ctrack", ""},
+		{strings.Repeat("A/", 130), ""},
+		{strings.Repeat("a ", 125) + "b", "\u00a0\u00a0"},
+	} {
+		got := SanitizePath(tc.name, tc.whitespace)
+		if !utf8.ValidString(got) || strings.ContainsRune(got, utf8.RuneError) || len(got) > 255 {
+			t.Errorf("sanitized component has %d bytes: %q", len(got), got)
+		}
+	}
+}
+
+func TestSanitizePathAvoidsWindowsDeviceBasenames(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"cOn.txt", "cOn_.txt"},
+		{"AUX .live.flac", "AUX_.live.flac"},
+		{"LPT\u00b2.aiff", "LPT\u00b2_.aiff"},
+		{"CONSOLE.flac", "CONSOLE.flac"},
+	} {
+		if got := SanitizePath(tc.name, ""); got != tc.want {
+			t.Errorf("SanitizePath(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestReleaseDirectorySeparatorsOnlyComeFromTemplate(t *testing.T) {
+	release := Release{Slug: "one/two", UPC: "three/four", Date: "five/six"}
+	got := release.DirectoryName(NamingPreferences{Template: "Archive/{slug}/{upc}-{date}"})
+	want := "Archive/one\uff0ftwo/three\uff0ffour-five\uff0fsix"
+	if got != want {
+		t.Fatalf("directory = %q, want %q", got, want)
 	}
 }

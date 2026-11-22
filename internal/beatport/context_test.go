@@ -153,7 +153,7 @@ func TestWithContextCancellationStopsRefresh(t *testing.T) {
 }
 
 func TestWithContextKeepsOriginalClientUsable(t *testing.T) {
-	base := New("", nil)
+	base := New(nil, nil)
 	base.auth = authTestClient(t, nil).auth
 	base.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return authTestResponse(req, 200, `{}`), nil
