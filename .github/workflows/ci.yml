@@ -124,6 +124,15 @@ jobs:
         run: |
           ./scripts/build-release-target.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
 
+      - name: Sign and verify Intel executable
+        shell: bash
+        run: |
+          test "$(lipo -archs bin/beatportdl-darwin-amd64)" = x86_64
+          codesign --force --sign - --timestamp=none bin/beatportdl-darwin-amd64
+          codesign --verify --strict bin/beatportdl-darwin-amd64
+          codesign --display --verbose=2 bin/beatportdl-darwin-amd64
+          bin/beatportdl-darwin-amd64 --help > /dev/null
+
   macos-arm64-build:
     name: darwin-arm64 native build
     runs-on: macos-15

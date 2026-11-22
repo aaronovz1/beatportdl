@@ -472,6 +472,24 @@ class ImmutablePins(unittest.TestCase):
                     if "docker run" in step.get("run", ""):
                         self.fail("workflows must use the isolated Docker wrapper")
 
+    def test_native_intel_build_signs_and_verifies_before_packaging(self):
+        for filename, job_name in (("ci.yml", "macos-amd64-build"),
+                                   ("release.yml", "macos-amd64-release")):
+            with self.subTest(workflow=filename):
+                job = workflows()[filename]["jobs"][job_name]
+                self.assertEqual(job["runs-on"], "macos-15-intel")
+                steps = job["steps"]
+                build = next(i for i, s in enumerate(steps) if s["name"] == "Build native artifact")
+                sign = next((i for i, s in enumerate(steps) if s["name"] == "Sign and verify Intel executable"), -1)
+                self.assertEqual(sign, build + 1)
+                command = steps[sign]["run"]
+                self.assertIn("codesign --force --sign - --timestamp=none bin/beatportdl-darwin-amd64", command)
+                self.assertIn("codesign --verify --strict bin/beatportdl-darwin-amd64", command)
+                self.assertNotIn("continue-on-error", steps[sign])
+                if filename == "release.yml":
+                    package = next(i for i, s in enumerate(steps) if s["name"] == "Package macOS artifact")
+                    self.assertLess(sign, package)
+
     def test_release_gate_and_tag_validation(self):
         jobs = workflows()["release.yml"]["jobs"]
         gate = jobs["release-gate"]

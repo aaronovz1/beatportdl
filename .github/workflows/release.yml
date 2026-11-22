@@ -144,6 +144,15 @@ jobs:
         run: |
           ./scripts/build-release-target.sh darwin-amd64 "$RUNNER_TEMP/deps/darwin-amd64"
 
+      - name: Sign and verify Intel executable
+        shell: bash
+        run: |
+          test "$(lipo -archs bin/beatportdl-darwin-amd64)" = x86_64
+          codesign --force --sign - --timestamp=none bin/beatportdl-darwin-amd64
+          codesign --verify --strict bin/beatportdl-darwin-amd64
+          codesign --display --verbose=2 bin/beatportdl-darwin-amd64
+          bin/beatportdl-darwin-amd64 --help > /dev/null
+
       - name: Record toolchain and Go module inventory
         shell: bash
         run: |
@@ -158,8 +167,16 @@ jobs:
           } > dist/build-tools-darwin-amd64.txt
 
       - name: Package macOS artifact
+        shell: bash
         run: |
-          tar -C bin -czf "dist/beatportdl-${GITHUB_REF_NAME}-darwin-amd64.tar.gz" beatportdl-darwin-amd64
+          archive="dist/beatportdl-${GITHUB_REF_NAME}-darwin-amd64.tar.gz"
+          tar -C bin -czf "$archive" beatportdl-darwin-amd64
+          test "$(tar -tzf "$archive")" = beatportdl-darwin-amd64
+          check="$(mktemp -d)"
+          trap 'rm -rf "$check"' EXIT
+          tar -C "$check" -xzf "$archive"
+          cmp bin/beatportdl-darwin-amd64 "$check/beatportdl-darwin-amd64"
+          codesign --verify --strict "$check/beatportdl-darwin-amd64"
 
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
