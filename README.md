@@ -24,6 +24,8 @@ With `sort_by_context` enabled, artist downloads use `Artists/<artist_directory_
 
 Existing-file checks still use the target directory and embedded track identity; this change does not search other download directories or move existing files. Move existing artist/label context folders beneath their new `Artists`/`Labels` groups before rerunning. If they contain release subdirectories, keep `force_release_directories` enabled or move the audio files into the context directory to avoid downloading them again. Set `sort_by_context: false` (or `--sort-by-context=false`) to download directly into `downloads_directory` without groups or release subdirectories.
 
+Use a download directory that other users cannot modify. BeatportDL rejects unsafe directory permissions, linked subfolders, and linked audio or cover destinations. Set `downloads_directory` to the actual library location rather than placing links inside it.
+
 ## Setup
 
 1. [Download](https://github.com/aaronovz1/beatportdl/releases/) or [build](#building) BeatportDL.
@@ -328,7 +330,7 @@ make docker-release-core
 
 Host-managed build prerequisites, if you choose not to use Docker:
 
-- [Go](https://go.dev/dl/) 1.27.3
+- [Go](https://go.dev/dl/) 1.27.4
 - [TagLib](https://github.com/taglib/taglib) 2.3.2
 - [zlib](https://github.com/madler/zlib) 1.3.2
 - [Zig C/C++ Toolchain](https://github.com/ziglang/zig) 0.16.0 for container cross-builds

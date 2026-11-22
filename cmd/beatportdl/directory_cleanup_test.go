@@ -189,7 +189,7 @@ func TestDirectoryCleanupResetsAfterCancelledAdmissionAndFreshRuns(t *testing.T)
 		app.ctx = context.Background()
 		dir := filepath.Join(app.config.DownloadsDirectory, "Reused")
 		app.globalWorker(func() {
-			if _, err := app.createDirectory(dir); err != nil {
+			if _, err := app.createDirectory(app.config.DownloadsDirectory, dir); err != nil {
 				t.Error(err)
 			}
 			app.cleanup(dir)

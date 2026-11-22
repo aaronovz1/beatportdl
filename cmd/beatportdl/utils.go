@@ -110,6 +110,12 @@ func (app *application) downloadFile(url string, destination string, pbPrefix st
 	if err := app.context().Err(); err != nil {
 		return err
 	}
+	if err := app.validateDownloadDirectory(filepath.Dir(destination)); err != nil {
+		return err
+	}
+	if _, err := inspectDownloadFile(destination); err != nil {
+		return err
+	}
 	extension := strings.ToLower(filepath.Ext(destination))
 	isAudio := extension == ".flac" || extension == ".m4a"
 	if !isAudio {

@@ -1,6 +1,6 @@
 module unspok3n/beatportdl
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/Eyevinn/hls-m3u8 v0.6.5

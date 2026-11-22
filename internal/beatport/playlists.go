@@ -25,35 +25,17 @@ type PlaylistItem struct {
 
 func (p *Playlist) DirectoryName(n NamingPreferences) string {
 	var firstGenre string
-	var bpmRange string
-
 	if len(p.Genres) > 0 {
 		firstGenre = p.Genres[0]
 	}
-
-	if len(p.BPMRange) > 0 && p.BPMRange[0] != nil && p.BPMRange[1] != nil {
-		bpmRange = fmt.Sprintf("%d-%d", *p.BPMRange[0], *p.BPMRange[1])
-	}
-
-	templateValues := map[string]string{
-		"id":           strconv.Itoa(int(p.ID)),
-		"name":         SanitizeForPath(p.Name),
-		"first_genre":  SanitizeForPath(firstGenre),
-		"track_count":  NumberWithPadding(p.TrackCount, p.TrackCount, n.TrackNumberPadding),
-		"bpm_range":    bpmRange,
-		"length":       p.LengthMs.Display(),
-		"created_date": p.CreatedDate.Format("2006-01-02"),
-		"updated_date": p.UpdatedDate.Format("2006-01-02"),
-	}
-	directoryName := ParseTemplate(n.Template, templateValues)
-	return SanitizeDirectoryPath(directoryName, n.Whitespace)
+	return p.DirectoryNameWithFirstTrackGenre(n, firstGenre)
 }
 
 // DirectoryNameWithFirstTrackGenre creates a directory name using the genre from the first track
 func (p *Playlist) DirectoryNameWithFirstTrackGenre(n NamingPreferences, firstTrackGenre string) string {
 	var bpmRange string
 
-	if len(p.BPMRange) > 0 && p.BPMRange[0] != nil && p.BPMRange[1] != nil {
+	if len(p.BPMRange) >= 2 && p.BPMRange[0] != nil && p.BPMRange[1] != nil {
 		bpmRange = fmt.Sprintf("%d-%d", *p.BPMRange[0], *p.BPMRange[1])
 	}
 

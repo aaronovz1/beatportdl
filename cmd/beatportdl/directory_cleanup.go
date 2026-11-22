@@ -62,6 +62,9 @@ func (app *application) cleanupPendingDirectories() {
 		if directory == root {
 			continue
 		}
+		if err := prepareDownloadDirectory(root, directory, false); err != nil {
+			continue
+		}
 		info, err := os.Lstat(directory)
 		if err != nil || !info.IsDir() || rootInfo != nil && os.SameFile(info, rootInfo) {
 			continue

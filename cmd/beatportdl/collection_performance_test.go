@@ -20,6 +20,7 @@ import (
 
 	"unspok3n/beatportdl/config"
 	"unspok3n/beatportdl/internal/beatport"
+	"unspok3n/beatportdl/internal/taglib"
 )
 
 // Only the authenticated HTTP boundary is replaced: catalog parsing, scheduling,
@@ -34,6 +35,7 @@ type collectionFixture struct {
 	releaseStatus int
 	pageSize      int
 	trackStatus   func(int64) int
+	listTrack     func(beatport.Track) beatport.Track
 	chartImage    beatport.Image
 }
 
@@ -108,6 +110,13 @@ func (f *collectionFixture) roundTrip(req *http.Request) (*http.Response, error)
 				next = &url
 			}
 			tracks = tracks[start:end]
+		}
+		if f.listTrack != nil {
+			rows := make([]beatport.Track, 0, len(tracks))
+			for _, track := range tracks {
+				rows = append(rows, f.listTrack(track))
+			}
+			tracks = rows
 		}
 		if req.URL.Path == "/v4/catalog/playlists/42/tracks/" {
 			items := make([]beatport.PlaylistItem, 0, len(tracks))
@@ -397,6 +406,81 @@ func TestCollectionFirstGenreDirectoriesStillUseFirstTrack(t *testing.T) {
 				t.Fatalf("first genre requests = %+v; want one genre lookup and no release lookup", fixture.requests)
 			}
 		})
+	}
+}
+
+func TestCollectionFirstGenreDoesNotUseFallbackDirectory(t *testing.T) {
+	for _, kind := range []string{"playlist", "chart"} {
+		for _, scenario := range []string{"lookup failed", "genre missing", "empty"} {
+			t.Run(kind+"/"+scenario, func(t *testing.T) {
+				count := 1
+				if scenario == "empty" {
+					count = 0
+				}
+				app, bp, fixture := newCollectionFixture(t, count)
+				app.config.SortByContext = true
+				app.config.PlaylistDirectoryTemplate = "{first_genre}/{name}"
+				app.config.ChartDirectoryTemplate = "{first_genre}/{name}"
+				if scenario == "lookup failed" {
+					fixture.trackStatus = func(int64) int { return http.StatusForbidden }
+				}
+				var logs bytes.Buffer
+				app.logWriter = &logs
+				runCollection(app, bp, kind)
+				assertCatalogFiles(t, app.config.DownloadsDirectory)
+				if fixture.count("/v4/catalog/tracks/1/download/") != 0 {
+					t.Fatal("requested media without resolving the destination genre")
+				}
+				if scenario != "empty" && !strings.Contains(logs.String(), "first track genre") {
+					t.Fatalf("did not report the genre lookup failure: %q", logs.String())
+				}
+			})
+		}
+	}
+}
+
+func TestCollectionUsesFullMetadataForSparseRows(t *testing.T) {
+	for _, kind := range []string{"playlist", "chart"} {
+		for _, existing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/existing=%t", kind, existing), func(t *testing.T) {
+				app, bp, fixture := newCollectionFixture(t, 1)
+				app.config.FixTags = true
+				app.config.TrackFileTemplate = "{name} ({mix_name})"
+				fixture.tracks[0].MixName = "Extended Mix"
+				fixture.tracks[0].ISRC = "GBABC2600001"
+				fixture.listTrack = func(track beatport.Track) beatport.Track {
+					return beatport.Track{ID: track.ID, Name: "Sparse", Release: track.Release}
+				}
+				dir := app.config.DownloadsDirectory
+				if existing {
+					writeIdentityAudio(t, filepath.Join(dir, "Renamed.flac"), "", fixture.tracks[0].ISRC)
+				}
+				audio := audioFixture(t, "tone.flac")
+				var mediaRequests int
+				app.mediaClient = &http.Client{Transport: searchSelectionTransport(func(req *http.Request) (*http.Response, error) {
+					mediaRequests++
+					return &http.Response{StatusCode: http.StatusOK, ContentLength: int64(len(audio)), Body: io.NopCloser(bytes.NewReader(audio))}, nil
+				})}
+				runCollection(app, bp, kind)
+				if existing {
+					if mediaRequests != 0 {
+						t.Errorf("downloaded track already present under its ISRC")
+					}
+					assertCatalogFiles(t, dir, "Renamed.flac")
+					return
+				}
+				name := "Track 1 (Extended Mix).flac"
+				assertCatalogFiles(t, dir, name)
+				file, err := taglib.Read(filepath.Join(dir, name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer file.Close()
+				if isrc := file.GetProperty("ISRC"); isrc != fixture.tracks[0].ISRC {
+					t.Errorf("ISRC = %q, want %q", isrc, fixture.tracks[0].ISRC)
+				}
+			})
+		}
 	}
 }
 

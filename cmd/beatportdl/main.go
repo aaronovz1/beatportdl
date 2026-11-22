@@ -42,6 +42,7 @@ type application struct {
 
 	urls                  []string
 	activeFiles           map[string]int64
+	activeTrackWrites     map[string]chan struct{}
 	activeFilesMutex      sync.RWMutex
 	readTrackFileIdentity func(path string) (trackFileIdentity, error)
 	downloadTrack         func(inst *beatport.Beatport, id int64, quality string) (*beatport.TrackDownload, error)

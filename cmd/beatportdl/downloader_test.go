@@ -17,6 +17,12 @@ func newTestApplication(trackExists string) *application {
 	}
 }
 
+func (app *application) reserveTrackFilePath(dir, name, ext string, id int64, isrc string) (string, error) {
+	app.activeFilesMutex.Lock()
+	defer app.activeFilesMutex.Unlock()
+	return app.reserveTrackPathLocked(dir, name, ext, id, isrc)
+}
+
 func TestArtistAndLabelGroupsPreserveDirectoryTemplates(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -43,6 +44,41 @@ func identityTestApplication(policy string) *application {
 		"m4a":  {"track_isrc": "ISRC"},
 	}
 	return app
+}
+
+func TestMixedCaseTagUpdate(t *testing.T) {
+	for _, ext := range []string{".FlAc", ".M4A"} {
+		t.Run(ext, func(t *testing.T) {
+			dir := t.TempDir()
+			original := filepath.Join(dir, "existing"+strings.ToLower(ext))
+			writeIdentityAudio(t, original, "101", "GBABC2600001")
+			path := filepath.Join(dir, "renamed"+ext)
+			if err := os.Rename(original, path); err != nil {
+				t.Fatal(err)
+			}
+			app := identityTestApplication("update")
+			app.config.FixTags = true
+			app.config.CoverSize = config.DefaultCoverSize
+			location, err := app.reserveTrackFilePath(dir, "new name", strings.ToLower(ext), 101, "GBABC2600001")
+			if err != nil || location != path {
+				t.Fatalf("reservation = %q, %v; want %q", location, err, path)
+			}
+			if err := app.tagTrack(location, &beatport.Track{ID: 101, ISRC: "GBABC2600002"}, ""); err != nil {
+				t.Fatal(err)
+			}
+			file, err := taglib.Read(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			if got := file.GetProperty("ISRC"); got != "GBABC2600002" {
+				t.Errorf("saved ISRC = %q, want updated ISRC", got)
+			}
+			if got := app.trackTagsNeedCover(path); got != (ext == ".M4A") {
+				t.Errorf("unexpected cover decision: %v", got)
+			}
+		})
+	}
 }
 
 func TestCompletedDownloadIsRecognizedAfterFilenameChange(t *testing.T) {
@@ -263,7 +299,7 @@ func TestActiveCollisionReusesExistingSuffixedTrack(t *testing.T) {
 			writeIdentityAudio(t, suffix, "202", "GBABC2600002")
 			app := identityTestApplication(policy)
 			// A is already active when B's identical rendered filename is processed.
-			app.activeFiles[base] = 101
+			app.activeFiles[trackPathKey(base)] = 101
 			got, err := app.reserveTrackFilePath(dir, "Shared", ".flac", 202, "GBABC2600002")
 			want := suffix
 			var wantErr error
@@ -276,7 +312,7 @@ func TestActiveCollisionReusesExistingSuffixedTrack(t *testing.T) {
 			if got != want || !errors.Is(err, wantErr) {
 				t.Fatalf("reservation = %q, %v; want %q, %v", got, err, want, wantErr)
 			}
-			if app.activeFiles[base] != 101 {
+			if app.activeFiles[trackPathKey(base)] != 101 {
 				t.Fatal("reservation changed the first track's ownership")
 			}
 			assertCatalogFiles(t, dir, "Shared.flac", "Shared (1).flac")
@@ -289,12 +325,12 @@ func TestIdentityMatchDoesNotStealActivePath(t *testing.T) {
 	path := filepath.Join(dir, "Existing.flac")
 	writeIdentityAudio(t, path, "101", "GBABC2600001")
 	app := identityTestApplication("update")
-	app.activeFiles[path] = 202
+	app.activeFiles[trackPathKey(path)] = 202
 	got, err := app.reserveTrackFilePath(dir, "Corrected", ".flac", 101, "GBABC2600001")
 	if want := filepath.Join(dir, "Corrected.flac"); got != want || err != nil {
 		t.Fatalf("reservation = %q, %v; want %q", got, err, want)
 	}
-	if app.activeFiles[path] != 202 {
+	if app.activeFiles[trackPathKey(path)] != 202 {
 		t.Fatal("identity lookup stole another active track's path")
 	}
 }

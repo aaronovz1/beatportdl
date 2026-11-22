@@ -50,7 +50,7 @@ func (cache *collectionReleases) cleanup(app *application) {
 }
 
 func (app *application) skipCollectionTrack(track *beatport.Track, directory string, media *trackMedia) bool {
-	if app.config.TrackExists != "skip" {
+	if app.config.TrackExists != "skip" || app.validateDownloadDirectory(directory) != nil {
 		return false
 	}
 	app.activeFilesMutex.Lock()
@@ -69,31 +69,52 @@ func (app *application) handleCollectionTrack(inst *beatport.Beatport, track *be
 		return false, nil
 	}
 
-	release, err := releases.get(inst, track.Release.ID)
-	if err != nil {
-		return false, fmt.Errorf("fetch track release: %w", err)
-	}
-	track.Release = *release
+	releaseID := track.Release.ID
+	var release *beatport.Release
 	trackDownloadsDir := downloadsDir
-	if releaseDirectories {
-		trackDownloadsDir = app.downloadsDirectory(downloadsDir, release)
-	}
-	if releaseDirectories && app.skipCollectionTrack(track, trackDownloadsDir, media) {
-		return false, nil
+	if releaseID > 0 {
+		release, err = releases.get(inst, releaseID)
+		if err != nil {
+			return false, fmt.Errorf("fetch track release: %w", err)
+		}
+		if releaseDirectories && app.skipCollectionTrack(track, app.downloadsDirectory(downloadsDir, release), media) {
+			return false, nil
+		}
 	}
 
 	fullTrack, err := inst.GetTrack(track.ID)
 	if err != nil {
 		return false, fmt.Errorf("fetch full track: %w", err)
 	}
-	track.Number = fullTrack.Number
-	if _, err := app.createDirectory(trackDownloadsDir); err != nil {
+	if fullTrack.ISRC == "" {
+		fullTrack.ISRC = track.ISRC
+	}
+	if fullTrack.Release.ID > 0 {
+		releaseID = fullTrack.Release.ID
+	}
+	if releaseID <= 0 {
+		return false, fmt.Errorf("track %d has no release ID", fullTrack.ID)
+	}
+	if release == nil || releaseID != track.Release.ID {
+		release, err = releases.get(inst, releaseID)
+		if err != nil {
+			return false, fmt.Errorf("fetch track release: %w", err)
+		}
+	}
+	fullTrack.Release = *release
+	if releaseDirectories {
+		trackDownloadsDir = app.downloadsDirectory(downloadsDir, release)
+	}
+	if app.skipCollectionTrack(fullTrack, trackDownloadsDir, media) {
+		return false, nil
+	}
+	if _, err := app.createDirectory(downloadsDir, trackDownloadsDir); err != nil {
 		return false, fmt.Errorf("setup track release directory: %w", err)
 	}
 	releases.rememberDirectory(trackDownloadsDir)
 	cover := newTrackCover(app, release.Image, trackDownloadsDir, app.requireCover(true, app.config.ForceReleaseDirectories))
 	defer cover.CleanupTemp()
-	processed, err := app.handleTrackMedia(track, trackDownloadsDir, cover, media)
+	processed, err := app.handleTrackMedia(fullTrack, trackDownloadsDir, cover, media)
 	if err != nil {
 		return false, err
 	}

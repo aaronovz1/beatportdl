@@ -208,7 +208,7 @@ func TestCatalogTracksPaginationErrorWaitsBeforeCoverCleanup(t *testing.T) {
 	assertCatalogFiles(t, filepath.Join(app.config.DownloadsDirectory, "Release"), "One.flac", "cover.jpg")
 }
 
-func TestCatalogTracksTagFailureCleansTemporaryCover(t *testing.T) {
+func TestCatalogTracksPublishConflictCleansTemporaryCover(t *testing.T) {
 	app := newCatalogTestApplication(t)
 	audio := audioFixture(t, "tone.flac")
 	app.config.FixTags = true
@@ -217,8 +217,8 @@ func TestCatalogTracksTagFailureCleansTemporaryCover(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/cover" {
 			coverRequests.Add(1)
-			// Inject a tag-read failure after transfer validation, while the cover is fetched.
-			if err := os.WriteFile(filepath.Join(app.config.DownloadsDirectory, "Release", "One.flac"), []byte("invalid audio"), 0600); err != nil {
+			// Simulate another writer finishing while cover art is being fetched.
+			if err := os.WriteFile(filepath.Join(app.config.DownloadsDirectory, "Release", "One.flac"), []byte("other writer"), 0600); err != nil {
 				t.Error(err)
 			}
 		}
@@ -234,8 +234,9 @@ func TestCatalogTracksTagFailureCleansTemporaryCover(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCatalogFiles(t, filepath.Join(app.config.DownloadsDirectory, "Release"), "One.flac")
+	assertFileContents(t, filepath.Join(app.config.DownloadsDirectory, "Release", "One.flac"), "other writer")
 	if coverRequests.Load() != 1 {
-		t.Fatalf("cover requests = %d, want 1 before tag failure", coverRequests.Load())
+		t.Fatalf("cover requests = %d, want 1 before publish conflict", coverRequests.Load())
 	}
 }
 

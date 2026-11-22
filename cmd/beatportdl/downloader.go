@@ -23,60 +23,66 @@ func (app *application) infoLogWrapper(url, message string) {
 	app.LogInfo(fmt.Sprintf("[%s] %s", url, message))
 }
 
-func (app *application) createDirectory(baseDir string, subDir ...string) (string, error) {
-	fullPath := filepath.Join(baseDir, filepath.Join(subDir...))
-	err := CreateDirectory(fullPath)
-	return fullPath, err
+func (app *application) createDirectory(root, directory string) (string, error) {
+	if configured := app.config.DownloadsDirectory; configured != "" {
+		root = configured
+	}
+	return directory, prepareDownloadDirectory(root, directory, true)
 }
 
 type DownloadsDirectoryEntity interface {
 	DirectoryName(n beatport.NamingPreferences) string
 }
 
-// FirstTrackGenreProvider interface for entities that can provide the first track's genre
-type FirstTrackGenreProvider interface {
+type firstTrackGenreEntity interface {
+	DownloadsDirectoryEntity
 	DirectoryNameWithFirstTrackGenre(n beatport.NamingPreferences, firstTrackGenre string) string
 }
 
-// getFirstTrackGenreFromPlaylist fetches the first track from a playlist and returns its genre
-func (app *application) getFirstTrackGenreFromPlaylist(inst *beatport.Beatport, playlistID int64) (string, error) {
-	// Get the first page of playlist items
+var errEmptyCollection = errors.New("collection is empty")
+
+func getFirstTrackGenreFromPlaylist(inst *beatport.Beatport, playlistID int64) (string, error) {
 	items, err := inst.GetPlaylistItems(playlistID, 1, "")
 	if err != nil {
 		return "", err
 	}
 
 	if len(items.Results) == 0 {
-		return "", fmt.Errorf("playlist is empty")
+		return "", missingFirstTrack(items.Next)
 	}
-
-	// Get the first track's full details
-	firstTrack, err := inst.GetTrack(items.Results[0].Track.ID)
-	if err != nil {
-		return "", err
-	}
-
-	return firstTrack.Genre.Name, nil
+	return getFirstTrackGenre(inst, items.Results[0].Track.ID)
 }
 
-// getFirstTrackGenreFromChart fetches the first track from a chart and returns its genre
-func (app *application) getFirstTrackGenreFromChart(inst *beatport.Beatport, chartID int64) (string, error) {
-	// Get the first page of chart tracks
+func getFirstTrackGenreFromChart(inst *beatport.Beatport, chartID int64) (string, error) {
 	tracks, err := inst.GetChartTracks(chartID, 1, "")
 	if err != nil {
 		return "", err
 	}
 
 	if len(tracks.Results) == 0 {
-		return "", fmt.Errorf("chart is empty")
+		return "", missingFirstTrack(tracks.Next)
 	}
+	return getFirstTrackGenre(inst, tracks.Results[0].ID)
+}
 
-	// Get the first track's full details
-	firstTrack, err := inst.GetTrack(tracks.Results[0].ID)
+func missingFirstTrack(next *string) error {
+	if next == nil {
+		return errEmptyCollection
+	}
+	return errors.New("the first page has no tracks but advertises more pages")
+}
+
+func getFirstTrackGenre(inst *beatport.Beatport, id int64) (string, error) {
+	if id <= 0 {
+		return "", errors.New("the first track has no catalog ID")
+	}
+	firstTrack, err := inst.GetTrack(id)
 	if err != nil {
 		return "", err
 	}
-
+	if strings.TrimSpace(firstTrack.Genre.Name) == "" {
+		return "", errors.New("the first track has no genre")
+	}
 	return firstTrack.Genre.Name, nil
 }
 
@@ -137,74 +143,43 @@ func (app *application) downloadsDirectory(baseDir string, entity DownloadsDirec
 
 func (app *application) setupDownloadsDirectory(baseDir string, entity DownloadsDirectoryEntity) (string, error) {
 	directory := app.downloadsDirectory(baseDir, entity)
-	relative, err := filepath.Rel(baseDir, directory)
-	if err != nil || !filepath.IsLocal(relative) {
-		return "", fmt.Errorf("download directory must remain within the configured root")
-	}
-	return app.createDirectory(directory)
+	return app.createDirectory(baseDir, directory)
 }
 
 func (app *application) setupTrackDownloadsDirectory(baseDir string, track *beatport.Track) (string, error) {
+	directory := baseDir
 	if app.config.SortByContext {
 		genre := beatport.SanitizePath(track.Genre.Name, app.config.WhitespaceCharacter)
-		baseDir = filepath.Join(baseDir, genre)
+		directory = filepath.Join(baseDir, genre)
 	}
-	return app.createDirectory(baseDir)
+	return app.createDirectory(baseDir, directory)
 }
 
-// setupDownloadsDirectoryWithFirstTrackGenre sets up the downloads directory using the first track's genre
-func (app *application) setupDownloadsDirectoryWithFirstTrackGenre(baseDir string, entity DownloadsDirectoryEntity, provider FirstTrackGenreProvider, inst *beatport.Beatport, entityID int64) (string, error) {
-	if app.config.SortByContext {
-		var subDir string
-		var firstGenre string
-		var err error
-
-		// Get the first track's genre based on entity type
-		switch entity.(type) {
-		case *beatport.Playlist:
-			if !strings.Contains(app.config.PlaylistDirectoryTemplate, "{first_genre}") {
-				return app.setupDownloadsDirectory(baseDir, entity)
-			}
-			firstGenre, err = app.getFirstTrackGenreFromPlaylist(inst, entityID)
-		case *beatport.Chart:
-			if !strings.Contains(app.config.ChartDirectoryTemplate, "{first_genre}") {
-				return app.setupDownloadsDirectory(baseDir, entity)
-			}
-			firstGenre, err = app.getFirstTrackGenreFromChart(inst, entityID)
-		default:
-			// Fall back to original behavior for other entity types
-			return app.setupDownloadsDirectory(baseDir, entity)
-		}
-
-		if err != nil {
-			// If we can't get the first track's genre, fall back to the original behavior
-			return app.setupDownloadsDirectory(baseDir, entity)
-		}
-
-		// Use the first track's genre for directory naming
-		switch castedEntity := entity.(type) {
-		case *beatport.Playlist:
-			subDir = castedEntity.DirectoryNameWithFirstTrackGenre(
-				beatport.NamingPreferences{
-					Template:           app.config.PlaylistDirectoryTemplate,
-					Whitespace:         app.config.WhitespaceCharacter,
-					TrackNumberPadding: app.config.TrackNumberPadding,
-				},
-				firstGenre,
-			)
-		case *beatport.Chart:
-			subDir = castedEntity.DirectoryNameWithFirstTrackGenre(
-				beatport.NamingPreferences{
-					Template:           app.config.ChartDirectoryTemplate,
-					Whitespace:         app.config.WhitespaceCharacter,
-					TrackNumberPadding: app.config.TrackNumberPadding,
-				},
-				firstGenre,
-			)
-		}
-		baseDir = filepath.Join(baseDir, subDir)
+func (app *application) setupDownloadsDirectoryWithFirstTrackGenre(baseDir string, entity firstTrackGenreEntity, inst *beatport.Beatport, entityID int64) (string, error) {
+	if !app.config.SortByContext {
+		return app.setupDownloadsDirectory(baseDir, entity)
 	}
-	return app.createDirectory(baseDir)
+	var template string
+	var fetchGenre func(*beatport.Beatport, int64) (string, error)
+	switch entity.(type) {
+	case *beatport.Playlist:
+		template, fetchGenre = app.config.PlaylistDirectoryTemplate, getFirstTrackGenreFromPlaylist
+	case *beatport.Chart:
+		template, fetchGenre = app.config.ChartDirectoryTemplate, getFirstTrackGenreFromChart
+	}
+	if !strings.Contains(template, "{first_genre}") {
+		return app.setupDownloadsDirectory(baseDir, entity)
+	}
+	genre, err := fetchGenre(inst, entityID)
+	if err != nil {
+		return "", fmt.Errorf("resolve first track genre: %w", err)
+	}
+	subDir := entity.DirectoryNameWithFirstTrackGenre(beatport.NamingPreferences{
+		Template:           template,
+		Whitespace:         app.config.WhitespaceCharacter,
+		TrackNumberPadding: app.config.TrackNumberPadding,
+	}, genre)
+	return app.createDirectory(baseDir, filepath.Join(baseDir, subDir))
 }
 
 func (app *application) requireCover(respectFixTags, respectKeepCover bool) bool {
@@ -219,7 +194,6 @@ func (app *application) downloadCover(image beatport.Image, downloadsDir string)
 	coverPath := filepath.Join(downloadsDir, uuid.New().String())
 	err := app.downloadFile(coverUrl, coverPath, "")
 	if err != nil {
-		os.Remove(coverPath)
 		return "", err
 	}
 	return coverPath, nil
@@ -282,8 +256,17 @@ func (app *application) handleCoverFile(path string) error {
 	if path == "" {
 		return nil
 	}
+	if err := app.validateDownloadDirectory(filepath.Dir(path)); err != nil {
+		return err
+	}
+	if info, err := inspectDownloadFile(path); err != nil || info == nil {
+		return err
+	}
 	if app.config.KeepCover && app.config.SortByContext {
-		newPath := filepath.Dir(path) + "/cover.jpg"
+		newPath := filepath.Join(filepath.Dir(path), "cover.jpg")
+		if _, err := inspectDownloadFile(newPath); err != nil {
+			return err
+		}
 		if err := os.Rename(path, newPath); err != nil {
 			return err
 		}
@@ -297,7 +280,7 @@ func (app *application) trackTagsNeedCover(location string) bool {
 	if !app.config.FixTags {
 		return false
 	}
-	fileExt := filepath.Ext(location)
+	fileExt := strings.ToLower(filepath.Ext(location))
 	return app.config.CoverSize != config.DefaultCoverSize || fileExt == ".m4a"
 }
 
@@ -406,11 +389,11 @@ func (app *application) findExistingTrackFileByIdentity(directory, fileExtension
 	}
 	for _, key := range identity.keys() {
 		for _, candidate := range index.byIdentity[key] {
-			if owner, active := app.activeFiles[candidate.path]; active && owner != trackID {
+			if owner, active := app.activeFiles[trackPathKey(candidate.path)]; active && owner != trackID {
 				continue
 			}
-			info, err := os.Stat(candidate.path)
-			if err != nil || !info.Mode().IsRegular() {
+			info, err := inspectDownloadFile(candidate.path)
+			if err != nil || info == nil {
 				index.remove(candidate.path)
 				continue
 			}
@@ -461,8 +444,8 @@ func (app *application) trackIdentityFilesForDirectory(directory, fileExtension 
 		}
 
 		candidate := filepath.Join(directory, entry.Name())
-		info, err := os.Stat(candidate)
-		if err != nil || !info.Mode().IsRegular() {
+		info, err := inspectDownloadFile(candidate)
+		if err != nil || info == nil {
 			continue
 		}
 		identity, err := app.readExistingTrackFileIdentity(candidate)
@@ -479,6 +462,7 @@ func (app *application) resetTrackFileState() {
 	app.activeFilesMutex.Lock()
 	defer app.activeFilesMutex.Unlock()
 	app.activeFiles = make(map[string]int64, len(app.urls))
+	app.activeTrackWrites = nil
 	app.trackIdentityFiles = nil
 }
 
@@ -486,8 +470,8 @@ func (app *application) rememberCompletedTrackFile(path string, track *beatport.
 	app.activeFilesMutex.Lock()
 	defer app.activeFilesMutex.Unlock()
 	path = filepath.Clean(path)
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
+	info, err := inspectDownloadFile(path)
+	if err != nil || info == nil {
 		return
 	}
 	diskIdentity, err := app.readExistingTrackFileIdentity(path)
@@ -531,54 +515,56 @@ func (app *application) existingTrackFileBelongsToDifferentTrack(path string, tr
 func (app *application) reserveSuffixedTrackFilePath(directory, fileName, fileExtension string, trackID int64) (string, error) {
 	for i := 1; ; i++ {
 		candidate := filepath.Join(directory, fmt.Sprintf("%s (%d)%s", fileName, i, fileExtension))
-		if owner, exists := app.activeFiles[candidate]; exists && owner != trackID {
+		key := trackPathKey(candidate)
+		if owner, exists := app.activeFiles[key]; exists && owner != trackID {
 			continue
 		}
 
-		if _, err := os.Stat(candidate); err == nil {
+		if _, err := os.Lstat(candidate); err == nil {
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
 
-		app.activeFiles[candidate] = trackID
+		app.activeFiles[key] = trackID
 		return candidate, nil
 	}
 }
 
-func (app *application) reserveTrackFilePath(directory, fileName, fileExtension string, trackID int64, isrc string) (string, error) {
+// The caller holds activeFilesMutex.
+func (app *application) reserveTrackPathLocked(directory, fileName, fileExtension string, trackID int64, isrc string) (string, error) {
 	basePath := filepath.Join(directory, fileName+fileExtension)
-
-	app.activeFilesMutex.Lock()
-	defer app.activeFilesMutex.Unlock()
+	baseKey := trackPathKey(basePath)
 
 	if existingPath, ok := app.findExistingTrackFileByIdentity(directory, fileExtension, trackID, isrc); ok {
 		path, err := app.handleExistingTrackPath(existingPath)
 		if path != "" {
-			app.activeFiles[path] = trackID
+			app.activeFiles[trackPathKey(path)] = trackID
 		}
 		return path, err
 	}
 
-	if owner, exists := app.activeFiles[basePath]; exists && owner != trackID {
+	if owner, exists := app.activeFiles[baseKey]; exists && owner != trackID {
 		return app.reserveSuffixedTrackFilePath(directory, fileName, fileExtension, trackID)
 	}
 
-	if _, err := os.Stat(basePath); err == nil {
+	info, err := inspectDownloadFile(basePath)
+	if err != nil {
+		return "", err
+	}
+	if info != nil {
 		if app.existingTrackFileBelongsToDifferentTrack(basePath, trackID, isrc) {
 			return app.reserveSuffixedTrackFilePath(directory, fileName, fileExtension, trackID)
 		}
 
 		path, err := app.handleExistingTrackPath(basePath)
 		if path != "" {
-			app.activeFiles[path] = trackID
+			app.activeFiles[baseKey] = trackID
 		}
 		return path, err
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
 	}
 
-	app.activeFiles[basePath] = trackID
+	app.activeFiles[baseKey] = trackID
 	return basePath, nil
 }
 
@@ -587,32 +573,10 @@ func (app *application) saveTrack(inst *beatport.Beatport, track *beatport.Track
 	if err != nil {
 		return "", false, err
 	}
-	return app.saveTrackMedia(track, directory, media)
+	return app.commitTrackMedia(track, directory, nil, media)
 }
 
-func (app *application) saveTrackMedia(track *beatport.Track, directory string, media *trackMedia) (location string, downloaded bool, err error) {
-	fileName := track.Filename(
-		beatport.NamingPreferences{
-			Template:           app.config.TrackFileTemplate,
-			Whitespace:         app.config.WhitespaceCharacter,
-			ArtistsLimit:       app.config.ArtistsLimit,
-			ArtistsShortForm:   app.config.ArtistsShortForm,
-			TrackNumberPadding: app.config.TrackNumberPadding,
-			KeySystem:          app.config.KeySystem,
-		},
-	)
-	filePath, err := app.reserveTrackFilePath(directory, fileName, media.extension, track.ID, track.ISRC)
-	if err != nil {
-		return "", false, err
-	}
-	if filePath == "" {
-		return "", false, nil
-	}
-	if _, err := os.Stat(filePath); err == nil && app.config.TrackExists == "update" {
-		app.infoLogWrapper(track.StoreUrl(), "updating tags")
-		return filePath, false, nil
-	}
-
+func (app *application) transferTrackMedia(track *beatport.Track, filePath string, media *trackMedia) error {
 	var prefix string
 	infoDisplay := fmt.Sprintf("%s (%s) [%s]", track.Name.String(), track.MixName.String(), media.displayQuality)
 	if app.config.ShowProgress {
@@ -623,20 +587,20 @@ func (app *application) saveTrackMedia(track *beatport.Track, directory string, 
 
 	if media.download != nil {
 		if err := app.downloadFile(media.download.Location, filePath, prefix); err != nil {
-			return "", false, err
+			return err
 		}
 	} else if media.stream != nil {
 		segments, key, err := app.getStreamSegments(media.stream.Url)
 		if err != nil {
-			return "", false, fmt.Errorf("get stream segments: %w", err)
+			return fmt.Errorf("get stream segments: %w", err)
 		}
-		segmentsFile, err := app.downloadSegments(directory, *segments, *key, prefix)
+		segmentsFile, err := app.downloadSegments(filepath.Dir(filePath), *segments, *key, prefix)
 		if err != nil {
-			return "", false, fmt.Errorf("download segments: %w", err)
+			return fmt.Errorf("download segments: %w", err)
 		}
 		defer os.Remove(segmentsFile)
 		if err := remuxToM4AContext(app.context(), segmentsFile, filePath); err != nil {
-			return "", false, fmt.Errorf("remux to m4a: %w", err)
+			return fmt.Errorf("remux to m4a: %w", err)
 		}
 	}
 
@@ -644,7 +608,7 @@ func (app *application) saveTrackMedia(track *beatport.Track, directory string, 
 		fmt.Printf("Finished downloading %s\n", infoDisplay)
 	}
 
-	return filePath, true, nil
+	return nil
 }
 
 const (
@@ -652,9 +616,12 @@ const (
 )
 
 func (app *application) tagTrack(location string, track *beatport.Track, coverPath string) error {
-	fileExt := filepath.Ext(location)
 	if !app.config.FixTags {
 		return nil
+	}
+	fileExt := strings.ToLower(filepath.Ext(location))
+	if fileExt != ".m4a" && fileExt != ".flac" {
+		return fmt.Errorf("unsupported tag format %q", fileExt)
 	}
 	file, err := taglib.Read(location)
 	if err != nil {
@@ -801,29 +768,8 @@ func (app *application) handleTrack(inst *beatport.Beatport, track *beatport.Tra
 }
 
 func (app *application) handleTrackMedia(track *beatport.Track, downloadsDir string, cover *trackCover, media *trackMedia) (bool, error) {
-	location, downloaded, err := app.saveTrackMedia(track, downloadsDir, media)
-	if err != nil {
-		return false, fmt.Errorf("save track: %w", err)
-	}
-	if location == "" {
-		return false, nil
-	}
-
-	coverPath := ""
-	if app.trackTagsNeedCover(location) {
-		coverPath, err = cover.Path()
-		if err != nil {
-			return false, fmt.Errorf("download cover: %w", err)
-		}
-	}
-
-	if err = app.tagTrack(location, track, coverPath); err != nil {
-		return false, fmt.Errorf("tag track: %w", err)
-	}
-	if downloaded || app.config.FixTags {
-		app.rememberCompletedTrackFile(location, track)
-	}
-	return true, nil
+	location, _, err := app.commitTrackMedia(track, downloadsDir, cover, media)
+	return location != "", err
 }
 
 func forPaginatedWorkers[T any](
@@ -992,7 +938,10 @@ func (app *application) handlePlaylistLink(inst *beatport.Beatport, link *beatpo
 		return
 	}
 
-	downloadsDir, err := app.setupDownloadsDirectoryWithFirstTrackGenre(app.config.DownloadsDirectory, playlist, playlist, inst, link.ID)
+	downloadsDir, err := app.setupDownloadsDirectoryWithFirstTrackGenre(app.config.DownloadsDirectory, playlist, inst, link.ID)
+	if errors.Is(err, errEmptyCollection) {
+		return
+	}
 	if err != nil {
 		app.errorLogWrapper(link.Original, "setup downloads directory", err)
 		return
@@ -1024,7 +973,10 @@ func (app *application) handleChartLink(inst *beatport.Beatport, link *beatport.
 		return
 	}
 
-	downloadsDir, err := app.setupDownloadsDirectoryWithFirstTrackGenre(app.config.DownloadsDirectory, chart, chart, inst, link.ID)
+	downloadsDir, err := app.setupDownloadsDirectoryWithFirstTrackGenre(app.config.DownloadsDirectory, chart, inst, link.ID)
+	if errors.Is(err, errEmptyCollection) {
+		return
+	}
 	if err != nil {
 		app.errorLogWrapper(link.Original, "setup downloads directory", err)
 		return

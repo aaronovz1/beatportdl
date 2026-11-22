@@ -86,18 +86,18 @@ Linux targets are expected to come from the pinned Docker builder. macOS targets
 
 ## Supply-Chain Policy
 
-The Go toolchain is 1.27.3. TagLib is 2.3.2 at official commit
+The Go toolchain is 1.27.4. TagLib is 2.3.2 at official commit
 `deadc2990767dfbda0701e0ab35fdeea653db08f`. Zig remains 0.16.0 and zlib
 remains 1.3.2 with separate SHA-256 pins for the official and GitHub archives.
 The Go module graph is vendored; compilation does not fetch modules or an
 automatic replacement toolchain. Policy tests parse workflows with the existing
-vendored `go.yaml.in/yaml/v3` dependency, so they require Go 1.27.3 and a
+vendored `go.yaml.in/yaml/v3` dependency, so they require Go 1.27.4 and a
 synchronized vendor tree, not an additional Python YAML package.
 
-Pins were resolved from official metadata on 2026-10-22:
+Pins were resolved from official metadata starting on 2026-10-22. The Go builder digest was refreshed on 2026-11-22:
 
 - [TagLib v2.3.2 ref](https://api.github.com/repos/taglib/taglib/git/ref/tags/v2.3.2), peeled to its commit.
-- [Docker Registry API](https://distribution.github.io/distribution/spec/api/): the multi-platform index for `golang:1.27.3-bookworm` is `sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5`; `docker/dockerfile:1.7` is `sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e`.
+- [Docker Registry API](https://distribution.github.io/distribution/spec/api/): the multi-platform index for `golang:1.27.4-bookworm` is `sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea`; `docker/dockerfile:1.7` is `sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e`.
 - Official stable release refs and each pinned `action.yml` for [checkout v7.0.1](https://api.github.com/repos/actions/checkout/git/ref/tags/v7.0.1), [setup-go v7.0.0](https://api.github.com/repos/actions/setup-go/git/ref/tags/v7.0.0), [upload-artifact v7.0.2](https://api.github.com/repos/actions/upload-artifact/git/ref/tags/v7.0.2), [download-artifact v8.0.2](https://api.github.com/repos/actions/download-artifact/git/ref/tags/v8.0.2), [attest-build-provenance v4.2.2](https://api.github.com/repos/actions/attest-build-provenance/git/ref/tags/v4.2.2), and [setup-msys2 v2.33.0](https://api.github.com/repos/msys2/setup-msys2/git/ref/tags/v2.33.0). Workflows contain full resolved commit IDs, never mutable refs. JavaScript actions declare Node24 directly; the composite attestation action pins `actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d`, whose `action.yml` also declares Node24. No forced-runtime override substitutes for upgrading old action majors.
 - [actionlint v1.7.12 assets](https://api.github.com/repos/rhysd/actionlint/releases/tags/v1.7.12) provide the SHA-256 used by the workflow lint gate.
 
@@ -163,7 +163,7 @@ not-latest behavior are retained.
 
 The native macOS arm64 CI and release jobs run `govulncheck ./...` after building
 TagLib dependencies and before building the application. They install
-`golang.org/x/vuln/cmd/govulncheck@v1.9.0`, use Go 1.27.3 with
+`golang.org/x/vuln/cmd/govulncheck@v1.9.0`, use Go 1.27.4 with
 `GOTOOLCHAIN=local`, and supply CGO header/library paths for the native dependency
 prefix so all packages can be analyzed. Installation and the official Go
 vulnerability database at `https://vuln.go.dev` require network access outside

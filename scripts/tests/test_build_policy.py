@@ -30,7 +30,7 @@ def workflows():
                   *map(str, paths)], cwd=ROOT,
                  env=dict(os.environ, GOTOOLCHAIN="local", GOPROXY="off", GOSUMDB="off"))
     if result.returncode:
-        raise RuntimeError("Go 1.27.3 and synchronized vendor tree required for YAML policy checks: " + result.stderr)
+        raise RuntimeError("Go 1.27.4 and synchronized vendor tree required for YAML policy checks: " + result.stderr)
     return json.loads(result.stdout)
 
 
@@ -74,7 +74,7 @@ with open(os.environ['DOCKER_TEST_LOG'], 'a') as f:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, dest)
         self.write("cmd/main.go", "package main\n")
-        self.write("go.mod", "module example\ngo 1.27.3\n")
+        self.write("go.mod", "module example\ngo 1.27.4\n")
         self.write("Makefile", "all:\n\ttrue\n")
         self.write(".gitignore", "ignored.go\n")
         self.write("internal/deleted/source.go", "package deleted\n")
@@ -371,7 +371,7 @@ class ImmutablePins(unittest.TestCase):
 
     def test_container_pins_and_offline_toolchain(self):
         dockerfile = (ROOT / "Dockerfile.build").read_text()
-        self.assertRegex(dockerfile, r"FROM golang:1\.27\.3-bookworm@sha256:[0-9a-f]{64}")
+        self.assertRegex(dockerfile, r"FROM golang:1\.27\.4-bookworm@sha256:[0-9a-f]{64}")
         self.assertRegex(dockerfile, r"# syntax=docker/dockerfile:1\.7@sha256:[0-9a-f]{64}")
         for value in ("GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "-mod=vendor"):
             self.assertIn(value, dockerfile)
@@ -415,7 +415,7 @@ class ImmutablePins(unittest.TestCase):
             self.assertNotIn("if", step)
             self.assertNotIn("||", step["run"])
             setups = [entry for entry in steps[:index] if entry.get("uses", "").startswith("actions/setup-go@")]
-            self.assertEqual(str(setups[-1]["with"]["go-version"]), "1.27.3")
+            self.assertEqual(str(setups[-1]["with"]["go-version"]), "1.27.4")
 
     def test_release_sbom_contains_native_and_go_dependencies(self):
         jobs = workflows()["release.yml"]["jobs"]
@@ -429,7 +429,7 @@ class ImmutablePins(unittest.TestCase):
                 record = dist / ("release-" + target) / ("build-tools-" + target + ".txt")
                 record.parent.mkdir(parents=True)
                 record.write_text(
-                    "go version go1.27.3 darwin/arm64\n"
+                    "go version go1.27.4 darwin/arm64\n"
                     "\tdep\texample.com/dependency\tv1.2.3\th1:fixture\n"
                     "\tbuild\tCGO_ENABLED=1\n")
             result = run(["bash", "-e", "-c", generators[0]["run"]], cwd=directory,

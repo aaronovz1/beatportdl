@@ -42,8 +42,15 @@ int taglib_strip_mp4(TagLib_File *file) {
     TagLib::MP4::File *mfile = dynamic_cast<TagLib::MP4::File *>(reinterpret_cast<TagLib::FileRef *>(file)->file());
     if(mfile == NULL)
         return 0;
-    if(mfile->strip()) return 1;
-    return 0;
+    TagLib::MP4::Tag *tag = mfile->tag();
+    if(tag == NULL)
+        return 0;
+    // Clear the tag items in memory. File::strip writes immediately and also
+    // removes the unrelated stem atom.
+    const auto items = tag->itemMap();
+    for(auto it = items.begin(); it != items.end(); ++it)
+        tag->removeItem(it->first);
+    return 1;
 }
 
 void taglib_set_picture(TagLib_File *file, const char *data, unsigned int size, const char *desc, const char *mime, const char *typ) {

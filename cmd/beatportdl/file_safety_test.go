@@ -13,7 +13,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+	"unspok3n/beatportdl/config"
 	"unspok3n/beatportdl/internal/beatport"
 )
 
@@ -43,6 +47,179 @@ func audioFixture(t *testing.T, name string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestRepeatedTrackTransfersOnlyOnce(t *testing.T) {
+	audio := audioFixture(t, "tone.flac")
+	started := make(chan struct{})
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			close(started)
+			<-release
+		}
+		_, _ = w.Write(audio)
+	}))
+	defer server.Close()
+	defer unblock()
+	app := directDownloadTestApplication(server.URL)
+	app.config.TrackExists = "skip"
+	dir := t.TempDir()
+	track := &beatport.Track{ID: 1, Name: "Repeat"}
+	first, second := make(chan error, 1), make(chan error, 1)
+	run := func(done chan<- error) {
+		_, err := app.handleTrack(nil, track, dir, nil)
+		done <- err
+	}
+	go run(first)
+	select {
+	case <-started:
+	case err := <-first:
+		t.Fatalf("initial worker returned before starting transfer: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("initial transfer did not start")
+	}
+	go run(second)
+	var secondReturned bool
+	var secondErr error
+	select {
+	case secondErr = <-second:
+		secondReturned = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	unblock()
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if !secondReturned {
+		secondErr = <-second
+	}
+	if secondErr != nil || requests.Load() != 1 {
+		t.Fatalf("second worker error = %v, requests = %d; want one successful transfer", secondErr, requests.Load())
+	}
+}
+
+func TestCaseOnlyTrackReservationsDoNotAlias(t *testing.T) {
+	app := newTestApplication("skip")
+	dir := t.TempDir()
+	first, err := app.reserveTrackFilePath(dir, "Mix", ".flac", 101, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := app.reserveTrackFilePath(dir, "MIX", ".flac", 102, "")
+	if err != nil || second == "" || strings.EqualFold(first, second) {
+		t.Fatalf("reservations %q and %q, error = %v; want separate paths", first, second, err)
+	}
+}
+
+func TestTagFailurePreservesOriginalTrack(t *testing.T) {
+	for _, policy := range []string{"update", "overwrite"} {
+		t.Run(policy, func(t *testing.T) {
+			audio := audioFixture(t, "tone.m4a")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(audio)
+			}))
+			defer server.Close()
+			dir := t.TempDir()
+			original := filepath.Join(dir, "Existing.m4a")
+			writeIdentityAudio(t, original, "101", "GBABC2600001")
+			before, err := os.ReadFile(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app := directDownloadTestApplication(server.URL)
+			app.config.TrackExists = policy
+			app.config.FixTags = true
+			app.config.TagMappings = config.DefaultTagMappings
+			track := &beatport.Track{ID: 101, Name: "Existing", ISRC: "GBABC2600001"}
+			media := &trackMedia{extension: ".m4a", download: &beatport.TrackDownload{Location: server.URL}}
+			cover := &trackCover{download: func() (string, error) { return t.TempDir(), nil }}
+			if _, err := app.handleTrackMedia(track, dir, cover, media); err == nil {
+				t.Fatal("expected failure reading artwork for tagging")
+			}
+			after, err := os.ReadFile(original)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("original audio changed after tag failure: %v", err)
+			}
+			assertCatalogFiles(t, dir, "Existing.m4a")
+		})
+	}
+}
+
+func TestDownloadDirectoryRejectsLinkedChild(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "actual")
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "Alias")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	app := newTestApplication("skip")
+	app.config.DownloadsDirectory = root
+	app.config.SortByContext = true
+	track := &beatport.Track{}
+	track.Genre.Name = "Alias"
+	if _, err := app.setupTrackDownloadsDirectory(root, track); err == nil {
+		t.Fatal("accepted linked child as a download directory")
+	}
+}
+
+func TestDownloadFileRejectsLinkedLeaf(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"track.flac", "cover.jpg"} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, name)
+			target := filepath.Join(dir, name+".original")
+			if err := os.WriteFile(target, []byte("original"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			app := directDownloadTestApplication("unused")
+			if err := app.downloadFile("unused", path, ""); err == nil || !strings.Contains(err.Error(), "not a regular download file") {
+				t.Fatalf("download error = %v; want linked destination rejected", err)
+			}
+			assertFileContents(t, target, "original")
+		})
+	}
+}
+
+func TestTagUpdateDoesNotModifyHardLinkedCopy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Existing.flac")
+	linkedCopy := filepath.Join(dir, "Copy.flac")
+	writeIdentityAudio(t, path, "101", "GBABC2600001")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(path, linkedCopy); err != nil {
+		t.Skipf("hard link unavailable: %v", err)
+	}
+	app := directDownloadTestApplication("unused")
+	app.config.TrackExists = "update"
+	app.config.FixTags = true
+	app.config.CoverSize = config.DefaultCoverSize
+	app.config.TagMappings = config.DefaultTagMappings
+	// Use the literal path so two existing tracks with identical identity do
+	// not make the choice of which link to replace ambiguous.
+	track := &beatport.Track{Name: "Existing", BPM: 122}
+	processed, err := app.handleTrackMedia(track, dir, nil, &trackMedia{extension: ".flac"})
+	if err != nil || !processed {
+		t.Fatalf("tag update = %v, %v", processed, err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || bytes.Equal(after, before) {
+		t.Fatalf("expected updated tags at the published path: %v", err)
+	}
+	untouched, err := os.ReadFile(linkedCopy)
+	if err != nil || !bytes.Equal(untouched, before) {
+		t.Fatalf("hard-linked copy changed: %v", err)
+	}
 }
 
 func TestSaveTrackOverwritePreservesOriginalOnDownloadFailure(t *testing.T) {
