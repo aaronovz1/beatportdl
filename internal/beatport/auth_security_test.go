@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"unspok3n/beatportdl/internal/securefile"
 )
 
 func TestCredentialCacheBindsToAccountNotPassword(t *testing.T) {
@@ -46,7 +48,7 @@ func TestCredentialCacheInvalidatesLegacyEntries(t *testing.T) {
 		t.Run(fixture.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "cache.json")
 			data := []byte(`{"access_token":"synthetic-token","refresh_token":"synthetic-refresh",` + fixture.fields + `}`)
-			if err := os.WriteFile(path, data, 0600); err != nil {
+			if err := securefile.Write(path, data); err != nil {
 				t.Fatal(err)
 			}
 			a := NewAuth("synthetic-account", "synthetic-password", path)
@@ -55,7 +57,7 @@ func TestCredentialCacheInvalidatesLegacyEntries(t *testing.T) {
 				want = ErrCacheAccountMismatch
 			}
 			if err := a.LoadCache(); !errors.Is(err, want) || a.snapshot() != nil {
-				t.Fatal("untrusted cached token was loaded")
+				t.Fatalf("LoadCache() = %v, want %v without loading a token", err, want)
 			}
 			if fixture.name == "unbound" {
 				return

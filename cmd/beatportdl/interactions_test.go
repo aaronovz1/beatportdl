@@ -17,6 +17,7 @@ import (
 	"unsafe"
 	"unspok3n/beatportdl/config"
 	"unspok3n/beatportdl/internal/beatport"
+	"unspok3n/beatportdl/internal/securefile"
 )
 
 func TestBeatportSearchQuery(t *testing.T) {
@@ -68,7 +69,7 @@ func TestSearchRejectsInvalidSelectionsAndPreservesOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cachePath, token, 0600); err != nil {
+	if err := securefile.Write(cachePath, token); err != nil {
 		t.Fatal(err)
 	}
 	auth := beatport.NewAuth("synthetic", "synthetic", cachePath)
