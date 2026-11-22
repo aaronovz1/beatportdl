@@ -2,23 +2,73 @@
 
 ## Unreleased
 
-- Upgrade to Go 1.27.4. Native builds handle paths containing spaces and isolate
-  their dependency caches without clearing the shared Go cache. Require exact,
-  nonempty changelog entries before release builds.
-- Preserve existing audio when transfers or tag writes fail. Serialize track
-  writes, avoid case-only filename collisions, and reject unsafe destinations.
-- Fix playlist and chart handling for unresolved first genres, incomplete BPM
-  ranges, sparse track metadata, and repeated pages.
-- Apply explicit proxies to API and media traffic, redact signed URLs in logs,
-  suppress media redirect referrers, and resolve HLS resources after redirects.
-- Remove password fingerprints from token caches (one login may be needed),
-  support reading CLI secrets from redirected stdin, and bound API, artwork,
-  and FFmpeg resource usage.
-- Improve batch exit status, interrupted downloads, piped input, filename
-  compatibility, terminal output safety, and artwork handling. Reduce duplicate
-  metadata and cover requests and memory usage during HLS downloads.
-- Reject linked build-context inputs and stream legacy error logs when tightening
-  their permissions.
+## v1.2.1 - 2026-11-22
+
+This update protects existing audio during downloads and tagging, improves
+playlist updates and batch reliability, and hardens network handling and builds.
+
+### Upgrade Notes
+
+- The first run may log in again. Legacy token caches are cleared and rebuilt
+  without a password fingerprint. Your configuration is not rewritten.
+- Use a download directory your account controls. Linked subdirectories,
+  linked audio and cover destinations, and directories with unsafe permissions
+  are rejected. Set `downloads_directory` to the actual library location.
+- An explicit proxy now applies to API and media requests. Invalid proxy URLs
+  stop startup. Use a private config file or `--password-stdin` and
+  `--proxy-stdin` for secrets; existing flags still work and warn about exposing
+  secrets in arguments or shell history.
+- Batch commands now return a nonzero exit status when work fails. Complete
+  entries in a URL list can still run if a later line cannot be read.
+- With `keep_cover` enabled, standalone tracks sharing a genre folder keep
+  release-specific `cover-<release-id>.jpg` files instead of competing for
+  `cover.jpg`. Existing files are not renamed.
+
+### Downloads and Library Safety
+
+- Fix tag updates for mixed-case FLAC and M4A extensions. Stage and validate
+  downloads and tag edits before publishing them, preserving existing audio
+  on failure. Updating a file does not modify another hard link to it.
+  M4A tag cleanup preserves the separate STEM metadata atom.
+- Serialize writes to the same destination and give case-only filename
+  collisions separate paths. Budget the complete filename, including its
+  collision suffix and extension, without splitting UTF-8 characters. Handle
+  Windows reserved names and keep release metadata from adding folder levels.
+- Do not fall back to another folder when a playlist or chart's
+  `{first_genre}` cannot be determined. Empty collections do nothing and
+  incomplete playlist BPM ranges no longer panic.
+- Use full playlist and chart track metadata for filenames, tags, and duplicate
+  detection, including existing files renamed on disk that match by ISRC.
+  Stop pagination when the server repeats a continuation.
+- Resolve relative HLS keys and media segments against the final manifest URL
+  after a redirect. Calculate progress per segment and clear failed progress
+  bars. Handle interrupts during setup, prompts, and downloads, and accept piped
+  input whose last line has no newline.
+
+### Security and Performance
+
+- Redact signed URLs with mixed-case HTTP schemes, omit media redirect
+  referrers, and escape terminal control characters in displayed metadata.
+- Bound API and artwork response sizes and cap FFmpeg diagnostics and runtime.
+  Decrypt HLS segments in place to avoid retaining a second full-size buffer.
+- Scope duplicate scans to each destination. Refresh changed directory
+  listings, retry failed scans, and probe for in-place tag edits on a bounded
+  schedule. Skipped artist and label tracks avoid extra metadata requests, and
+  playlist and chart tracks share release artwork downloads. Artwork decisions
+  use the format returned by the media endpoint.
+- Stream legacy error logs when migrating them to private files.
+
+### Builds and Release Checks
+
+- Use Go 1.27.4 in source builds, CI, and the pinned Docker builder. Reject
+  linked Docker build inputs and use dependency-specific Go caches instead of
+  clearing the shared cache. Native builds accept dependency and SDK paths with
+  spaces.
+- Require one exact, nonempty changelog section before release builds. Add
+  Windows-safe credential fixtures and regression coverage for the download,
+  CLI, cache, and build fixes.
+- Ad-hoc sign the native Intel macOS executable and verify the signature before
+  and after packaging. macOS binaries are not Developer ID signed or notarized.
 
 ## v1.2.0 - 2026-10-22
 
